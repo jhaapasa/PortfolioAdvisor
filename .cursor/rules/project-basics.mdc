@@ -1,0 +1,89 @@
+---
+alwaysApply: true
+---
+
+# Project Coding Rules
+
+These repository-wide rules are always included. If a rule conflicts with file-specific guidance, prefer the file-specific guidance.
+
+## Priorities
+- Favor clarity, correctness, and maintainability.
+- Make incremental, self-contained edits; avoid large refactors unless requested.
+- Do not introduce build, type, or linter errors.
+
+## Communication
+- Be concise and skimmable; use short sections and bullet points.
+- Use backticks for file, directory, function, and class names.
+- Only fence code when necessary to show examples.
+- For large changes, briefly outline a plan. Proceed incrementally and state assumptions; pause only if the user requests approval gates or you are blocked.
+
+## Code Style
+- Naming: Descriptive, full words; avoid abbreviations.
+- Types: Prefer type hints for public APIs; avoid `Any` when possible.
+- Control flow: Use early returns; avoid deep nesting.
+- Errors: Handle and propagate meaningfully; avoid silent catches.
+- Comments: Explain "why" for complex logic; avoid obvious comments.
+- Formatting: Match existing style; do not reformat unrelated code.
+- Indentation: Preserve existing tabs/spaces style and width; do not mix or convert.
+- Line length: Default to 100 characters unless the project specifies otherwise.
+
+## Dependencies
+- Avoid adding new dependencies without explicit request/approval.
+- Prefer standard library and existing utilities first.
+- Use `pyproject.toml` for package and dependency management.
+- Do not add or use `requirements.txt`.
+
+## Testing and Quality
+- Add/update tests when changing behavior.
+- Keep tests deterministic and fast.
+- Run linters/formatters if configured; resolve violations before completion.
+- CI must run: lint, format check, tests, and coverage gate (80% or more).
+- If using type hints, run mypy in CI; do not ignore type errors without justification.
+
+## Security
+- Never commit secrets, tokens, or credentials.
+- Sanitize logs; avoid leaking sensitive data.
+
+## Git and PRs
+- Make focused commits with meaningful messages.
+- Include a brief summary of impact and risks.
+- Provide minimal reproduction or test notes when relevant.
+
+## Performance
+- Optimize only when necessary and measurable.
+- Prefer readable algorithms; annotate hotspots if optimized.
+
+## Architecture (Customize)
+- Respect module boundaries and layering.
+- Keep public interfaces small and stable.
+- Document new interfaces or protocols briefly.
+
+## Documentation
+- Update README or inline docs when behavior or setup changes.
+- Include usage examples for new tools or scripts.
+
+## Agent Execution (Cursor)
+- Prefer absolute paths in tool calls.
+- Pass non-interactive flags for commands (e.g., `--yes`); avoid prompts.
+- If a command uses a pager, append `| cat`.
+- Long-running commands should run in the background.
+- Parallelize read-only discovery (searches/reads) when independent; limit to 3–5 concurrent calls.
+- Prefer semantic code search for discovery; use exact search for symbols.
+- After substantive edits, run format/lint and tests; fix failures before reporting completion.
+- Avoid posting long code in chat unless requested; make edits in files instead.
+- Call out any breaking changes explicitly.
+
+## Repository Layout
+- `src/` for application code.
+- `tests/` mirrors `src/` structure; name tests `test_*.py`.
+- Keep scripts and tooling in `scripts/`.
+
+## Project Software Stack and Tooling
+- Target Python 3.13.7.
+- Use `LangGraph` for the main agentic framework.
+- Use `pytest` for unit tests and `coverage.py` via `pytest-cov` for integrated coverage measurement.
+- Use `Black` for formatting and `Ruff` for linting.
+
+## Formatter/Linter Defaults
+- Black: line length 100; target version `py313`.
+- Ruff: line length 100; target version `py313`; enable import sorting.
