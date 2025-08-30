@@ -1,0 +1,27 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Analyze Portfolio (CLI)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "portfolio_advisor.cli",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src"
+      },
+      "preLaunchTask": "Prepare I/O dirs",
+      "args": [
+        "--input-dir",
+        "./input",
+        "--output-dir",
+        "./output"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": true
+    }
+  ]
+}
+
+
