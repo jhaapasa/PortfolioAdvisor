@@ -19,6 +19,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--max-tokens", type=int)
     p.add_argument("--temperature", type=float)
 
+    # Parser settings (override env)
+    p.add_argument("--parser-max-concurrency", type=int)
+    p.add_argument("--parser-max-rpm", type=int)
+    p.add_argument("--parser-max-retries", type=int)
+    p.add_argument("--parser-max-doc-chars", type=int)
+
     # Logging
     p.add_argument("--log-level", default=None, help="Logging level (e.g., INFO, DEBUG)")
     p.add_argument("--log-format", default=None, choices=["plain", "json"], help="Log format")
