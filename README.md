@@ -35,10 +35,9 @@ Configuration is loaded from environment (and `.env` in development) and can be 
 - Tuning: `REQUEST_TIMEOUT_S`, `MAX_TOKENS`, `TEMPERATURE`
 - Logging: `LOG_LEVEL`, `LOG_FORMAT` (plain|json)
 - Parser (LLM Parsing Agent):
-  - `PARSER_MAX_CONCURRENCY` (default 4)
-  - `PARSER_MAX_RPM` (default 60)
   - `PARSER_MAX_RETRIES` (default 2)
   - `PARSER_MAX_DOC_CHARS` (default 20000)
+  - Note: Parallelism is controlled at the LangGraph level via fan-out/fan-in; there are no per-parser concurrency/RPM knobs.
 
 CLI overrides example:
 
@@ -54,9 +53,9 @@ portfolio-advisor \
 ### Parser behavior
 
 - The ingestion node extracts plain text from inputs.
-- The parser node fans out with per-document LLM calls, bounded by `PARSER_MAX_CONCURRENCY` and `PARSER_MAX_RPM`.
-- Each call asks the model to emit JSON matching the schema for candidate holdings and retries up to `PARSER_MAX_RETRIES` on validation errors.
-- All candidates are concatenated and summarized by the analyst node.
+- The graph dispatches per-document parse tasks using LangGraph fan-out (Send), invoking a single-item parser for each doc in parallel.
+- Each call asks the model to emit JSON matching the schema for candidate holdings and retries up to `PARSER_MAX_RETRIES` on validation errors. Input text is truncated to `PARSER_MAX_DOC_CHARS`.
+- Results are reduced via additive state channels and then summarized by the analyst node.
 
 ## CLI parameters
 
@@ -114,8 +113,6 @@ The `portfolio-advisor` CLI accepts the following parameters. All options can al
 
 The following flags override the corresponding environment variables:
 
-- `--parser-max-concurrency` → `PARSER_MAX_CONCURRENCY` (default 4)
-- `--parser-max-rpm` → `PARSER_MAX_RPM` (default 60)
 - `--parser-max-retries` → `PARSER_MAX_RETRIES` (default 2)
 - `--parser-max-doc-chars` → `PARSER_MAX_DOC_CHARS` (default 20000)
 
@@ -125,9 +122,8 @@ You can combine them with other CLI options, for example:
 portfolio-advisor \
   --input-dir ./inputs \
   --output-dir ./outputs \
-  --parser-max-concurrency 8 \
-  --parser-max-rpm 120 \
-  --parser-max-retries 3
+  --parser-max-retries 3 \
+  --parser-max-doc-chars 5000
 ```
 
 ## Development

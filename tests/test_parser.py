@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from portfolio_advisor.agents.parser import parser_node
+from portfolio_advisor.agents.parser import parse_one_node
 
 
 class DummyLLM:
@@ -65,16 +65,10 @@ def test_parser_basic_concat(monkeypatch):
         parser_max_retries = 0
         parser_max_doc_chars = 5000
 
-    state = {
-        "settings": S(),
-        "raw_docs": [
-            {"name": "doc1.txt", "as_text": "Position: Apple"},
-            {"name": "doc2.csv", "as_text": "MSFT, 100"},
-        ],
-    }
-
-    out = parser_node(state)
-    holdings = out.get("parsed_holdings", [])
+    settings = S()
+    out1 = parse_one_node({"settings": settings, "doc": {"name": "doc1.txt", "as_text": "Position: Apple"}})
+    out2 = parse_one_node({"settings": settings, "doc": {"name": "doc2.csv", "as_text": "MSFT, 100"}})
+    holdings = (out1.get("parsed_holdings", []) or []) + (out2.get("parsed_holdings", []) or [])
     assert len(holdings) == 2
     names = {h["name"] for h in holdings}
     assert names == {"Apple Inc.", "Microsoft Corp"}
@@ -119,8 +113,8 @@ def test_parser_retry_fix(monkeypatch):
         parser_max_retries = 1
         parser_max_doc_chars = 5000
 
-    state = {"settings": S(), "raw_docs": [{"name": "d.txt", "as_text": "TSLA"}]}
-    out = parser_node(state)
+    state = {"settings": S(), "doc": {"name": "d.txt", "as_text": "TSLA"}}
+    out = parse_one_node(state)
     holdings = out.get("parsed_holdings", [])
     assert len(holdings) == 1
     assert holdings[0]["name"] == "Tesla"

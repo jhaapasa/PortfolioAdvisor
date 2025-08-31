@@ -2,9 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
 from ..llm import get_llm
@@ -123,77 +121,22 @@ def _parse_one_doc(
     )
 
 
-def _gather_threaded(
-    units: list[dict[str, Any]],
-    settings: Any,
-) -> list[ParsedHoldingsResult]:
-    max_conc = max(int(getattr(settings, "parser_max_concurrency", 4)), 1)
-    max_rpm = max(int(getattr(settings, "parser_max_rpm", 60)), 1)
-    min_interval = 60.0 / float(max_rpm)
+def parse_one_node(state: dict) -> dict:
+    """
+    Parse exactly one document unit and return incremental state updates.
 
-    last_call_ts = 0.0
-    ts_lock = threading.Lock()
-
-    def worker(unit: dict[str, Any]) -> ParsedHoldingsResult:
-        nonlocal last_call_ts
-        # cooperative rate limiting across threads
-        with ts_lock:
-            now = time.monotonic()
-            wait_for = last_call_ts + min_interval - now
-            if wait_for > 0:
-                time.sleep(wait_for)
-            last_call_ts = time.monotonic()
-        llm = get_llm(settings)
-        return _parse_one_doc(unit, settings, llm)
-
-    out: list[ParsedHoldingsResult] = []
-    with ThreadPoolExecutor(max_workers=max_conc) as pool:
-        future_to_idx = {pool.submit(worker, u): i for i, u in enumerate(units)}
-        for fut in as_completed(future_to_idx):
-            idx = future_to_idx[fut]
-            try:
-                res = fut.result()
-            except Exception as exc:  # pragma: no cover - defensive
-                unit = units[idx]
-                doc_id = unit.get("name") or unit.get("path") or f"doc_{idx}"
-                logger.warning("Parser task failed for %s: %s", doc_id, exc)
-                out.append(
-                    ParsedHoldingsResult(source_doc_id=doc_id, holdings=[], errors=[str(exc)])
-                )
-            else:
-                out.append(res)
-    return out
-
-
-def parser_node(state: dict) -> dict:
-    """LangGraph node: fan-out per document to parse candidate holdings, then concatenate.
-
-    Inputs: expects `raw_docs` from ingestion and `settings`.
-    Outputs: adds `parsed_holdings` (list of ParsedHolding as dicts) and appends any errors.
+    Inputs: expects `settings` and `doc` in state.
+    Outputs: returns `parsed_holdings` (list of ParsedHolding as dicts) and `errors` for aggregation.
     """
     settings = state["settings"]
-    raw_docs = state.get("raw_docs", []) or []
+    unit = state.get("doc") or {}
+    llm = get_llm(settings)
+    result = _parse_one_doc(unit, settings, llm)
 
-    if not raw_docs:
-        return {**state, "parsed_holdings": []}
-
-    # Run threaded parsing with concurrency and rate limits
-    results = _gather_threaded(raw_docs, settings)
-
-    concatenated: list[ParsedHolding] = []
-    errors: list[str] = list(state.get("errors", []) or [])
-    for res in results:
-        concatenated.extend(res.holdings)
-        errors.extend(res.errors)
-
-    # Convert models to plain dicts for graph state
-    holdings_dicts = [h.model_dump() for h in concatenated]
-    new_state = {**state, "parsed_holdings": holdings_dicts, "errors": errors}
-    logger.info(
-        "Parser produced %d candidate holdings from %d documents",
-        len(holdings_dicts),
-        len(raw_docs),
+    holdings_dicts = [h.model_dump() for h in result.holdings]
+    logger.debug(
+        "Parsed %d holdings from %s", len(holdings_dicts), unit.get("name") or unit.get("path")
     )
-    return new_state
+    return {"parsed_holdings": holdings_dicts, "errors": list(result.errors)}
 
 

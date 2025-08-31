@@ -26,8 +26,6 @@ class Settings(BaseSettings):
     temperature: float = Field(default=0.2, alias="TEMPERATURE")
 
     # Parser configuration
-    parser_max_concurrency: int = Field(default=4, alias="PARSER_MAX_CONCURRENCY")
-    parser_max_rpm: int = Field(default=60, alias="PARSER_MAX_RPM")
     parser_max_retries: int = Field(default=2, alias="PARSER_MAX_RETRIES")
     parser_max_doc_chars: int = Field(default=20000, alias="PARSER_MAX_DOC_CHARS")
 
