@@ -13,6 +13,8 @@ def test_ingestion_basic_types(tmp_path: Path):
     (in_dir / "b.md").write_text("# Title\nBody", encoding="utf-8")
     (in_dir / "c.csv").write_text("symbol,shares\nAAPL,10", encoding="utf-8")
     (in_dir / "d.html").write_text("<html><body><p>hi</p></body></html>", encoding="utf-8")
+    # OS artifacts to be ignored
+    (in_dir / ".DS_Store").write_text("ignored", encoding="utf-8")
 
     class S:
         input_dir = str(in_dir)

@@ -19,6 +19,20 @@ logger = logging.getLogger(__name__)
 # Hard cap to protect memory; can be lifted into Settings later if needed
 MAX_INGEST_BYTES = 2 * 1024 * 1024  # 2 MiB
 
+# Common OS/artifact files to ignore during ingestion
+IGNORED_FILENAMES = {".DS_Store", "Thumbs.db", "desktop.ini"}
+
+
+def _is_ignored_os_artifact(name: str) -> bool:
+    if name in IGNORED_FILENAMES:
+        return True
+    if name.startswith("._"):
+        return True
+    # Covers macOS special Icon files like "Icon\r"
+    if name.startswith("Icon") and len(name) <= 8:
+        return True
+    return False
+
 
 @dataclass
 class DocUnit:
@@ -182,6 +196,9 @@ def ingestion_node(state: dict) -> dict:
     type_counts: dict[str, int] = {}
 
     for p in paths:
+        if _is_ignored_os_artifact(p.name):
+            logger.debug("Skipping OS artifact: %s", p.name)
+            continue
         unit = _to_doc_unit(p)
         if unit is None:
             continue

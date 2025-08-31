@@ -209,3 +209,10 @@ __marimo__/
 # Debug I/O directories
 /input/
 /output/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+desktop.ini
+._*
+Icon?
