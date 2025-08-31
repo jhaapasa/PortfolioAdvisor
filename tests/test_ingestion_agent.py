@@ -42,5 +42,3 @@ def test_ingestion_truncation(tmp_path: Path):
     docs = out["raw_docs"]
     meta = docs[0]["metadata"]
     assert meta.get("truncated") is True
-
-

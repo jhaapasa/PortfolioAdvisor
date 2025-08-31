@@ -223,5 +223,3 @@ def ingestion_node(state: dict) -> dict:
     ]
 
     return {**state, "raw_docs": raw_docs}
-
-
