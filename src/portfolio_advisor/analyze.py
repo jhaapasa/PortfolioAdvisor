@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from .config import Settings
 from .errors import ConfigurationError
 from .graph import build_graph
-from .io_utils import list_input_files, read_files_preview, write_output_text
+from .io_utils import write_output_text
 from .logging_config import configure_logging
 
 logger = logging.getLogger(__name__)
@@ -33,13 +33,8 @@ def analyze_portfolio(
         raise ConfigurationError(str(exc)) from exc
     settings.ensure_directories()
 
-    files = list_input_files(settings.input_dir)
-    previews = read_files_preview(files)
-
     state = {
         "settings": settings,
-        "files": files,
-        "previews": previews,
         "requested_at": datetime.now(UTC).isoformat(),
     }
 
@@ -47,12 +42,14 @@ def analyze_portfolio(
     result = app.invoke(state)
 
     # Compose simple markdown output
+    raw_docs = result.get("raw_docs", []) or []
+    input_names = [str(doc.get("name", "")) for doc in raw_docs]
     lines = [
         "# Portfolio Analysis Report",
         f"Generated: {datetime.now(UTC).isoformat()}",
         "",
         "## Inputs",
-        *(f"- {p.name}" for p in files),
+        *(f"- {n}" for n in input_names),
         "",
         "## Plan",
         *(f"- {s}" for s in (result.get("plan", {}) or {}).get("steps", [])),

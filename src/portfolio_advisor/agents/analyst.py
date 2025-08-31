@@ -55,13 +55,17 @@ def analyst_node(state: dict) -> dict:
         api_base=settings.gemini_api_base,
     )
 
-    # In the MVP, produce a brief summary based on file names and plan
-    file_names = [p.name for p in state.get("files", [])]
+    # In the MVP, produce a brief summary based on ingested docs and plan
+    raw_docs = state.get("raw_docs", []) or []
+    file_descriptions = [
+        f"{d.get('name','')} ({d.get('mime_type','unknown')}, {d.get('source_bytes',0)} bytes)"
+        for d in raw_docs
+    ]
     plan = state.get("plan", {})
     prompt = (
         "You are a portfolio analyst. Given the input files and a simple plan, produce a short "
         "placeholder analysis suitable for a markdown report."
-        f"\nFiles: {', '.join(file_names) if file_names else 'none'}"
+        f"\nFiles: {', '.join(file_descriptions) if file_descriptions else 'none'}"
         f"\nPlan steps: {', '.join(plan.get('steps', []))}"
     )
 
