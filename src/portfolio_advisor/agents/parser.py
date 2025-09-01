@@ -79,7 +79,8 @@ def _parse_one_doc(
     base_prompt = "\n\n".join(
         [
             PARSER_SYSTEM_PROMPT,
-            PARSER_USER_PROMPT_TEMPLATE.format(
+            PARSER_USER_PROMPT_TEMPLATE
+            .format(
                 schema=schema_str,
                 source_doc_id=source_doc_id,
                 doc_text=_truncate_text(doc_text, max_chars),
@@ -107,6 +108,7 @@ def _parse_one_doc(
             raw = _invoke_llm_json(llm, prompt)
             result = _validate_to_model(raw)
             return result
+            return raw
         except Exception as exc:  # pragma: no cover - error paths validated via unit tests
             error_text = str(exc)
             logger.debug(
