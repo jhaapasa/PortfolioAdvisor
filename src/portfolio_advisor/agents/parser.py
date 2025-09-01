@@ -6,7 +6,7 @@ import time
 from typing import Any
 
 from ..llm import get_llm
-from ..models.parsed import ParsedHolding, ParsedHoldingsResult
+from ..models.parsed import ParsedHoldingsResult
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +17,7 @@ PARSER_SYSTEM_PROMPT = (
     "Extract a draft list of candidate holdings from the given document. "
     "Return ONLY valid JSON that conforms to the provided JSON Schema. "
     "When information is missing, set the field to null. "
-    "For basket, use \"[none]\" if not part of a basket. "
+    'For basket, use "[none]" if not part of a basket. '
     "Do not include any text outside the JSON object."
 )
 
@@ -27,7 +27,7 @@ PARSER_USER_PROMPT_TEMPLATE = (
     "- Identify holdings with best-effort fields: name, primary_ticker, company_name, "
     "  cusip, isin, sedol, quantity, weight, currency, account, basket, as_of, "
     "  confidence (0-1), source_doc_id.\n"
-    "- Use \"[none]\" for basket if not part of any basket.\n"
+    '- Use "[none]" for basket if not part of any basket.\n'
     "- Prefer known identifiers (ticker, CUSIP, ISIN, SEDOL); include extras under 'identifiers'.\n"
     "- If a value is unknown, use null.\n"
     "- Ensure the root object contains 'source_doc_id' and an array 'holdings'.\n\n"
@@ -76,25 +76,31 @@ def _parse_one_doc(
     max_chars = int(getattr(settings, "parser_max_doc_chars", 20000))
     retries = int(getattr(settings, "parser_max_retries", 2))
 
-    base_prompt = "\n\n".join([
-        PARSER_SYSTEM_PROMPT,
-        PARSER_USER_PROMPT_TEMPLATE.format(
-            schema=schema_str,
-            source_doc_id=source_doc_id,
-            doc_text=_truncate_text(doc_text, max_chars),
-        ),
-    ])
-
-    error_text = None
-    for attempt in range(retries + 1):
-        prompt = base_prompt if error_text is None else (
-            PARSER_SYSTEM_PROMPT
-            + "\n\n"
-            + PARSER_REPAIR_PROMPT_PREFIX.format(error=error_text)
-            + PARSER_USER_PROMPT_TEMPLATE.format(
+    base_prompt = "\n\n".join(
+        [
+            PARSER_SYSTEM_PROMPT,
+            PARSER_USER_PROMPT_TEMPLATE.format(
                 schema=schema_str,
                 source_doc_id=source_doc_id,
                 doc_text=_truncate_text(doc_text, max_chars),
+            ),
+        ]
+    )
+
+    error_text = None
+    for attempt in range(retries + 1):
+        prompt = (
+            base_prompt
+            if error_text is None
+            else (
+                PARSER_SYSTEM_PROMPT
+                + "\n\n"
+                + PARSER_REPAIR_PROMPT_PREFIX.format(error=error_text)
+                + PARSER_USER_PROMPT_TEMPLATE.format(
+                    schema=schema_str,
+                    source_doc_id=source_doc_id,
+                    doc_text=_truncate_text(doc_text, max_chars),
+                )
             )
         )
         try:
@@ -126,7 +132,8 @@ def parse_one_node(state: dict) -> dict:
     Parse exactly one document unit and return incremental state updates.
 
     Inputs: expects `settings` and `doc` in state.
-    Outputs: returns `parsed_holdings` (list of ParsedHolding as dicts) and `errors` for aggregation.
+    Outputs: returns `parsed_holdings` (list of ParsedHolding as dicts)
+    and `errors` for aggregation.
     """
     settings = state["settings"]
     unit = state.get("doc") or {}
@@ -138,5 +145,3 @@ def parse_one_node(state: dict) -> dict:
         "Parsed %d holdings from %s", len(holdings_dicts), unit.get("name") or unit.get("path")
     )
     return {"parsed_holdings": holdings_dicts, "errors": list(result.errors)}
-
-

@@ -12,7 +12,7 @@ LangGraph-based, function-defined agents to analyze a portfolio and emit a minim
    source .venv/bin/activate
    ```
 
-3. Set up environment variables for Gemini and parser (optional for stub run):
+3. Set up environment variables for OpenAI and parser (optional for stub run):
 
    - Copy `env.example` to `.env` and fill in values.
 
@@ -31,7 +31,7 @@ The command prints the path to `analysis.md` in the output directory.
 Configuration is loaded from environment (and `.env` in development) and can be overridden on the CLI.
 
 - Required at runtime: `--input-dir`, `--output-dir`
-- Gemini (optional for stub): `GEMINI_API_KEY`, `GEMINI_API_BASE`, `GEMINI_MODEL`
+- OpenAI (optional for stub): `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`
 - Tuning: `REQUEST_TIMEOUT_S`, `MAX_TOKENS`, `TEMPERATURE`
 - Logging: `LOG_LEVEL`, `LOG_FORMAT` (plain|json)
 - Parser (LLM Parsing Agent):
@@ -45,7 +45,7 @@ CLI overrides example:
 portfolio-advisor \
   --input-dir ./inputs \
   --output-dir ./outputs \
-  --gemini-model gemini-1.5-pro \
+  --openai-model gpt-4o-mini \
   --temperature 0.2 \
   --log-format json
 ```
@@ -69,20 +69,20 @@ The `portfolio-advisor` CLI accepts the following parameters. All options can al
   - Directory where outputs (e.g., `analysis.md`) will be written. Created if it does not exist.
   - No environment variable; must be provided via CLI.
 
-- `--gemini-api-key`
-  - API key for Google Gemini.
-  - Env: `GEMINI_API_KEY`
+- `--openai-api-key`
+  - API key for OpenAI.
+  - Env: `OPENAI_API_KEY`
   - Default: empty (a stub LLM is used and returns placeholder text).
 
-- `--gemini-api-base`
-  - Optional custom base URL for Gemini API.
-  - Env: `GEMINI_API_BASE`
+- `--openai-base-url`
+  - Optional custom base URL for OpenAI-compatible API.
+  - Env: `OPENAI_BASE_URL`
   - Default: empty (use library default).
 
-- `--gemini-model`
-  - Gemini model name.
-  - Env: `GEMINI_MODEL`
-  - Default: `gemini-1.5-pro`.
+- `--openai-model`
+  - OpenAI model name.
+  - Env: `OPENAI_MODEL`
+  - Default: `gpt-4o-mini`.
 
 - `--request-timeout-s`
   - Request timeout in seconds used by LLM calls.

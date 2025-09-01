@@ -18,16 +18,18 @@ def build_llm(
     max_tokens: int | None,
     api_key: str | None,
     api_base: str | None,
+    request_timeout_s: int | None,
 ) -> BaseChatModel:
     """Build an LLM instance for direct, uncached use.
 
     Prefer `get_llm(settings)` for shared, cached instances across agents.
     """
     # Lazy import to keep optional dependency path clean
-    from langchain_google_genai import ChatGoogleGenerativeAI
+    import httpx
+    from langchain_openai import ChatOpenAI
 
     if not api_key:
-        logger.warning("GEMINI_API_KEY not set; using placeholder LLM output.")
+        logger.warning("OPENAI_API_KEY not set; using placeholder LLM output.")
 
         # Create a dummy LLM-like object that returns canned responses
         class DummyLLM(BaseChatModel):
@@ -44,11 +46,23 @@ def build_llm(
 
         return DummyLLM()
 
-    return ChatGoogleGenerativeAI(
+    # Build a dedicated httpx client with strict total timeout and sane limits
+    http_timeout = None
+    if request_timeout_s is not None:
+        try:
+            http_timeout = httpx.Timeout(float(request_timeout_s))
+        except Exception:  # pragma: no cover - defensive
+            http_timeout = httpx.Timeout(60.0)
+    http_client = httpx.Client(timeout=http_timeout) if http_timeout is not None else None
+
+    return ChatOpenAI(
         model=model,
         temperature=temperature,
-        max_output_tokens=max_tokens,
-        google_api_key=api_key,
+        max_tokens=max_tokens,
+        api_key=api_key,
+        timeout=request_timeout_s,
+        max_retries=0,
+        **({"http_client": http_client} if http_client is not None else {}),
         **({"base_url": api_base} if api_base else {}),
     )
 
@@ -60,6 +74,7 @@ def _build_llm_cached(
     max_tokens: int | None,
     api_key: str | None,
     api_base: str | None,
+    request_timeout_s: int | None,
 ) -> BaseChatModel:
     return build_llm(
         model=model,
@@ -67,6 +82,7 @@ def _build_llm_cached(
         max_tokens=max_tokens,
         api_key=api_key,
         api_base=api_base,
+        request_timeout_s=request_timeout_s,
     )
 
 
@@ -76,9 +92,10 @@ def get_llm(settings: Settings) -> BaseChatModel:
     Multiple agents can call this to reuse the same underlying model client.
     """
     return _build_llm_cached(
-        model=settings.gemini_model,
+        model=settings.openai_model,
         temperature=settings.temperature,
         max_tokens=settings.max_tokens,
-        api_key=settings.gemini_api_key,
-        api_base=settings.gemini_api_base,
+        api_key=settings.openai_api_key,
+        api_base=settings.openai_base_url,
+        request_timeout_s=settings.request_timeout_s,
     )

@@ -17,10 +17,10 @@ class Settings(BaseSettings):
     input_dir: str
     output_dir: str
 
-    # Gemini / LLM
-    gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
-    gemini_api_base: str | None = Field(default=None, alias="GEMINI_API_BASE")
-    gemini_model: str = Field(default="gemini-1.5-pro", alias="GEMINI_MODEL")
+    # OpenAI / LLM
+    openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
+    openai_base_url: str | None = Field(default=None, alias="OPENAI_BASE_URL")
+    openai_model: str = Field(default="gpt-4o-mini", alias="OPENAI_MODEL")
     request_timeout_s: int = Field(default=60, alias="REQUEST_TIMEOUT_S")
     max_tokens: int | None = Field(default=None, alias="MAX_TOKENS")
     temperature: float = Field(default=0.2, alias="TEMPERATURE")
@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     # Logging
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     log_format: str = Field(default="plain", alias="LOG_FORMAT")
+    verbose: bool = Field(default=False, alias="VERBOSE")
+    agent_progress: bool = Field(default=False, alias="AGENT_PROGRESS")
 
     model_config = SettingsConfigDict(env_file=".env", extra="allow")
 

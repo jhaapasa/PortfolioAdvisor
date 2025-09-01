@@ -66,8 +66,12 @@ def test_parser_basic_concat(monkeypatch):
         parser_max_doc_chars = 5000
 
     settings = S()
-    out1 = parse_one_node({"settings": settings, "doc": {"name": "doc1.txt", "as_text": "Position: Apple"}})
-    out2 = parse_one_node({"settings": settings, "doc": {"name": "doc2.csv", "as_text": "MSFT, 100"}})
+    out1 = parse_one_node(
+        {"settings": settings, "doc": {"name": "doc1.txt", "as_text": "Position: Apple"}}
+    )
+    out2 = parse_one_node(
+        {"settings": settings, "doc": {"name": "doc2.csv", "as_text": "MSFT, 100"}}
+    )
     holdings = (out1.get("parsed_holdings", []) or []) + (out2.get("parsed_holdings", []) or [])
     assert len(holdings) == 2
     names = {h["name"] for h in holdings}
@@ -118,4 +122,3 @@ def test_parser_retry_fix(monkeypatch):
     holdings = out.get("parsed_holdings", [])
     assert len(holdings) == 1
     assert holdings[0]["name"] == "Tesla"
-

@@ -60,5 +60,3 @@ class ParsedHoldingsResult(BaseModel):
     as_of: str | None = Field(default=None, description="Document-level as-of date if present")
     holdings: list[ParsedHolding] = Field(default_factory=list)
     errors: list[str] = Field(default_factory=list)
-
-

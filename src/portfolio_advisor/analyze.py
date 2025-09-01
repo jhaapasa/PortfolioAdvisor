@@ -24,7 +24,14 @@ def analyze_portfolio(
     # Configure logging early using overrides if provided
     log_level = str(overrides.pop("log_level", overrides.pop("LOG_LEVEL", "INFO")))
     log_format = str(overrides.pop("log_format", overrides.pop("LOG_FORMAT", "plain")))
-    configure_logging(level=log_level, fmt=log_format)
+    verbose = bool(overrides.pop("verbose", overrides.pop("VERBOSE", False)))
+    agent_progress = bool(overrides.pop("agent_progress", overrides.pop("AGENT_PROGRESS", False)))
+    configure_logging(
+        level=log_level,
+        fmt=log_format,
+        verbose=verbose,
+        agent_progress=agent_progress,
+    )
 
     # Build settings (env + overrides)
     try:
@@ -39,7 +46,20 @@ def analyze_portfolio(
     }
 
     app = build_graph()
-    result = app.invoke(state)
+    if agent_progress:
+        # Stream state updates and log keys for simple progress visibility
+        result = None
+        try:
+            for chunk in app.stream(state, stream_mode="values"):
+                try:
+                    logger.info("[agent] update: %s", ", ".join(sorted(chunk.keys())))
+                except Exception:  # pragma: no cover - defensive
+                    logger.info("[agent] update received")
+                result = chunk
+        except Exception:  # pragma: no cover - fallback if stream unsupported
+            result = app.invoke(state)
+    else:
+        result = app.invoke(state)
 
     # Compose simple markdown output
     raw_docs = result.get("raw_docs", []) or []

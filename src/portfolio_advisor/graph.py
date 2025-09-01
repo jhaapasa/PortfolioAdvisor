@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import operator
-from typing import Any, Annotated, TypedDict
+from typing import Annotated, Any, TypedDict
 
 from langgraph.graph import END, StateGraph
 from langgraph.types import Send
@@ -36,6 +36,7 @@ def build_graph() -> Any:
     graph = StateGraph(GraphState)
     graph.add_node("ingestion", ingestion_node)
     graph.add_node("planner", planner_node)
+
     def _noop(_state: GraphState) -> dict:
         return {}
 

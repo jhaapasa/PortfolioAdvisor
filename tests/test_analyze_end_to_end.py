@@ -57,4 +57,3 @@ def test_end_to_end_summary(tmp_path: Path, monkeypatch):
     analyze_portfolio(input_dir=str(in_dir), output_dir=str(out_dir))
     content = (out_dir / "analysis.md").read_text(encoding="utf-8")
     assert "Summary of 2 holdings" in content
-
