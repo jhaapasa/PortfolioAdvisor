@@ -12,9 +12,10 @@ class Plan(TypedDict):
 
 
 def planner_node(state: dict) -> dict:
-    files = state.get("files", [])
-    file_names = [str(p) for p in files]
-    logger.debug("Planner received %d files", len(file_names))
+    # Use ingested documents from state for awareness/logging
+    raw_docs = state.get("raw_docs", []) or []
+    file_names = [str(d.get("name", "")) for d in raw_docs]
+    logger.debug("Planner received %d documents: %s", len(file_names), ", ".join(file_names))
     plan: Plan = {
         "steps": [
             "Read portfolio inputs",
