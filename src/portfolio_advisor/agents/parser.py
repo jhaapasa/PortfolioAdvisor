@@ -105,10 +105,20 @@ def _parse_one_doc(
             )
         )
         try:
+            logger.info(
+                "Parser agent invoking LLM for %s (attempt %d/%d)",
+                source_doc_id,
+                attempt + 1,
+                retries + 1,
+            )
             raw = _invoke_llm_json(llm, prompt)
             result = _validate_to_model(raw)
+            logger.info(
+                "Parser agent validation succeeded for %s with %d holdings",
+                source_doc_id,
+                len(result.holdings),
+            )
             return result
-            return raw
         except Exception as exc:  # pragma: no cover - error paths validated via unit tests
             error_text = str(exc)
             logger.debug(
@@ -122,6 +132,7 @@ def _parse_one_doc(
             time.sleep(min(0.25 * (attempt + 1), 1.0))
 
     # All attempts failed; return an empty result with errors
+    logger.info("Parser agent exhausted retries for %s; returning errors", source_doc_id)
     return ParsedHoldingsResult(
         source_doc_id=source_doc_id,
         holdings=[],
@@ -139,11 +150,19 @@ def parse_one_node(state: dict) -> dict:
     """
     settings = state["settings"]
     unit = state.get("doc") or {}
+    doc_name = unit.get("name") or unit.get("path") or "unknown"
+    logger.info("Parser agent start: %s", doc_name)
     llm = get_llm(settings)
     result = _parse_one_doc(unit, settings, llm)
 
     holdings_dicts = [h.model_dump() for h in result.holdings]
     logger.debug(
         "Parsed %d holdings from %s", len(holdings_dicts), unit.get("name") or unit.get("path")
+    )
+    logger.info(
+        "Parser agent finished: %s (%d holdings, %d errors)",
+        doc_name,
+        len(holdings_dicts),
+        len(result.errors),
     )
     return {"parsed_holdings": holdings_dicts, "errors": list(result.errors)}

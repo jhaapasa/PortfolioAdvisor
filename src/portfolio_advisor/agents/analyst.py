@@ -23,6 +23,7 @@ ANALYST_PROMPT_TEMPLATE = (
 def analyst_node(state: dict) -> dict:
     settings = state["settings"]
     llm = get_llm(settings)
+    logger.info("Analyst agent start")
 
     # Produce a brief summary based on parsed candidates and plan
     raw_docs = state.get("raw_docs", []) or []
@@ -55,4 +56,5 @@ def analyst_node(state: dict) -> dict:
         logger.warning("LLM call failed, using fallback: %s", exc)
         content = "Placeholder analysis due to LLM error."
 
+    logger.info("Analyst agent finished (%d chars)", len(content or ""))
     return {**state, "analysis": content}

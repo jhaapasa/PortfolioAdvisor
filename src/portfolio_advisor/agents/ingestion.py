@@ -190,6 +190,7 @@ def _to_doc_unit(path: Path) -> DocUnit | None:
 def ingestion_node(state: dict) -> dict:
     settings = state["settings"]
     base = settings.input_dir
+    logger.info("Ingestion agent start: base=%s", base)
     paths = list_input_files(base)
 
     docs: list[DocUnit] = []
@@ -222,4 +223,5 @@ def ingestion_node(state: dict) -> dict:
         for d in docs
     ]
 
+    logger.info("Ingestion agent finished: %d documents ready", len(raw_docs))
     return {**state, "raw_docs": raw_docs}
