@@ -38,6 +38,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Show LangGraph agent progress messages",
     )
+    p.add_argument(
+        "--skip-llm-cache",
+        action="store_true",
+        help="Force LLM calls to bypass cache lookup but write results to cache",
+    )
 
     return p
 

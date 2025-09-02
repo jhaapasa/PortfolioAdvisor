@@ -209,6 +209,7 @@ __marimo__/
 # Debug I/O directories
 /input/
 /output/
+/cache/
 
 # OS artifacts
 .DS_Store

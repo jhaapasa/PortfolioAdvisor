@@ -63,6 +63,8 @@ These repository-wide rules are always included. If a rule conflicts with file-s
 - Include usage examples for new tools or scripts.
 
 ## Agent Execution (Cursor)
+- Always activate the .venv virtual environment when testing code
+- Reinstall the package in the virtual environment to resolve new dependencies if needed
 - Prefer absolute paths in tool calls.
 - Pass non-interactive flags for commands (e.g., `--yes`); avoid prompts.
 - If a command uses a pager, append `| cat`.

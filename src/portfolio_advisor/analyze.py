@@ -3,6 +3,9 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
+import os
+from pathlib import Path
+
 from .config import Settings
 from .errors import ConfigurationError
 from .graph import build_graph
@@ -39,6 +42,35 @@ def analyze_portfolio(
     except Exception as exc:
         raise ConfigurationError(str(exc)) from exc
     settings.ensure_directories()
+
+    # Initialize global LangChain cache (SQLite) with optional read-bypass.
+    try:
+        from langchain_core.globals import set_llm_cache
+        from langchain_community.cache import SQLiteCache
+
+        cache_dir = Path("./cache")
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_path = cache_dir / "langchain_cache.sqlite3"
+
+        base_cache = SQLiteCache(database_path=str(cache_path))
+
+        if settings.skip_llm_cache:
+            # Adapter that bypasses lookup but writes updates to the underlying cache.
+            class _ReadBypassCache:
+                def __init__(self, inner):
+                    self._inner = inner
+
+                def lookup(self, prompt: str, llm_string: str):  # type: ignore[override]
+                    return None
+
+                def update(self, prompt: str, llm_string: str, result):  # type: ignore[override]
+                    return self._inner.update(prompt, llm_string, result)
+
+            set_llm_cache(_ReadBypassCache(base_cache))
+        else:
+            set_llm_cache(base_cache)
+    except Exception:  # pragma: no cover - cache setup best effort
+        logger.warning("LLM cache setup failed; continuing without cache.")
 
     state = {
         "settings": settings,

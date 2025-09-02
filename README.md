@@ -99,6 +99,11 @@ The `portfolio-advisor` CLI accepts the following parameters. All options can al
   - Env: `TEMPERATURE`
   - Default: `0.2`.
 
+- `--skip-llm-cache`
+  - Force LLM calls to bypass cache lookup but write results to the cache.
+  - Env: `SKIP_LLM_CAHCE=1` has the same effect.
+  - Cache DB persists at `./cache/langchain_cache.sqlite3`.
+
 - `--log-level`
   - Logging level (e.g., `DEBUG`, `INFO`, `WARNING`).
   - Env: `LOG_LEVEL`
