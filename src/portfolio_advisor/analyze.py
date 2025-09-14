@@ -1,9 +1,8 @@
 from __future__ import annotations
 
 import logging
-from datetime import UTC, datetime
-
 import os
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .config import Settings
@@ -45,8 +44,8 @@ def analyze_portfolio(
 
     # Initialize global LangChain cache (SQLite) with optional read-bypass.
     try:
-        from langchain_core.globals import set_llm_cache
         from langchain_community.cache import SQLiteCache
+        from langchain_core.globals import set_llm_cache
 
         cache_dir = Path("./cache")
         cache_dir.mkdir(parents=True, exist_ok=True)
@@ -96,12 +95,18 @@ def analyze_portfolio(
     # Compose simple markdown output
     raw_docs = result.get("raw_docs", []) or []
     input_names = [str(doc.get("name", "")) for doc in raw_docs]
+    resolved = result.get("resolved_holdings", []) or []
+    unresolved = result.get("unresolved_entities", []) or []
     lines = [
         "# Portfolio Analysis Report",
         f"Generated: {datetime.now(UTC).isoformat()}",
         "",
         "## Inputs",
         *(f"- {n}" for n in input_names),
+        "",
+        "## Resolver Summary",
+        f"Resolved holdings: {len(resolved)}",
+        f"Unresolved entities: {len(unresolved)}",
         "",
         "## Plan",
         *(f"- {s}" for s in (result.get("plan", {}) or {}).get("steps", [])),
@@ -112,4 +117,22 @@ def analyze_portfolio(
     ]
 
     output_path = write_output_text(settings.output_dir, "analysis.md", "\n".join(lines))
+    # Write resolved positions JSON for debugging/visibility
+    try:
+        import json as _json
+
+        resolved_json_path = os.path.join(settings.output_dir, "resolved_positions.json")
+        with open(resolved_json_path, "w", encoding="utf-8") as fh:
+            _json.dump(
+                {
+                    "resolved_holdings": resolved,
+                    "unresolved_entities": unresolved,
+                },
+                fh,
+                ensure_ascii=False,
+                indent=2,
+            )
+        logger.info("Wrote output: %s", resolved_json_path)
+    except Exception as exc:  # pragma: no cover - best-effort write
+        logger.warning("Failed to write resolved_positions.json: %s", exc)
     return output_path

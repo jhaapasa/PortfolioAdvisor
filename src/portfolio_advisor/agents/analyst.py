@@ -10,13 +10,15 @@ logger = logging.getLogger(__name__)
 # LLM prompt template is defined at module level for discoverability.
 ANALYST_PROMPT_TEMPLATE = (
     "You are a portfolio analyst. "
-    "Summarize candidate portfolio holdings extracted from input documents. "
+    "Summarize portfolio holdings extracted from input documents. "
     "Provide a concise, professional markdown summary covering: accounts, baskets, "
-    "identifier coverage, and notable missing data. "
+    "identifier coverage, resolver outcomes (resolved vs unresolved), and notable "
+    "missing data. "
     "Do not make recommendations.\n\n"
     "Files: {files}\n"
-    "Plan steps: {plan_steps}\n\n"
-    "Candidate holdings (JSON lines):\n{candidates}"
+    "Plan steps: {plan_steps}\n"
+    "Resolver: {resolver_summary}\n\n"
+    "Holdings (JSON lines):\n{candidates}"
 )
 
 
@@ -32,7 +34,11 @@ def analyst_node(state: dict) -> dict:
         for d in raw_docs
     ]
     plan = state.get("plan", {})
-    candidates = state.get("parsed_holdings", []) or []
+    # Prefer resolved holdings but fallback to parsed candidates
+    resolved = state.get("resolved_holdings", []) or []
+    parsed = state.get("parsed_holdings", []) or []
+    unresolved = state.get("unresolved_entities", []) or []
+    candidates = resolved or parsed
     # compact JSONL to avoid token bloat
     if candidates:
         try:
@@ -43,9 +49,15 @@ def analyst_node(state: dict) -> dict:
             cand_lines = "\n".join(str(c) for c in candidates[:200])
     else:
         cand_lines = "[none]"
+    resolver_summary = (
+        f"resolved={len(resolved)}, unresolved={len(unresolved)}"
+        if (resolved or unresolved)
+        else "no resolver data"
+    )
     prompt = ANALYST_PROMPT_TEMPLATE.format(
         files=", ".join(file_descriptions) if file_descriptions else "none",
         plan_steps=", ".join(plan.get("steps", [])),
+        resolver_summary=resolver_summary,
         candidates=cand_lines,
     )
 

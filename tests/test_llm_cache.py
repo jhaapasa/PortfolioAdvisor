@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from portfolio_advisor.analyze import analyze_portfolio
@@ -45,5 +44,3 @@ def test_skip_cache_bypasses_lookup_but_writes(tmp_path, monkeypatch):
     # Access inner cache if present to validate write occurred
     inner = getattr(cache, "_inner", cache)
     assert inner.lookup("prompt", "llm_string") is not None
-
-

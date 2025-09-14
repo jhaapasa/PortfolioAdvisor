@@ -20,6 +20,7 @@ dependencies = [
   "pydantic>=2.7",
   "pydantic-settings>=2.5",
   "python-dotenv>=1.0.1",
+  "polygon-api-client>=1.13.0",
 ]
 
 [project.optional-dependencies]
