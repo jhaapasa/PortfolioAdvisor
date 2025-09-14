@@ -13,7 +13,7 @@ def test_analyze_portfolio_smoke(tmp_path: Path, monkeypatch):
     (input_dir / "positions.csv").write_text("symbol,shares\nAAPL,10\n", encoding="utf-8")
 
     # Ensure no network call path is used
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     output_path = analyze_portfolio(str(input_dir), str(output_dir), log_level="DEBUG")
     assert os.path.exists(output_path)

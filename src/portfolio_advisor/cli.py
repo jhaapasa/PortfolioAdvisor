@@ -12,16 +12,37 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--output-dir", required=True, help="Path to output directory")
 
     # Env overrides
-    p.add_argument("--gemini-api-key")
-    p.add_argument("--gemini-api-base")
-    p.add_argument("--gemini-model")
+    p.add_argument("--openai-api-key")
+    p.add_argument("--openai-base-url")
+    p.add_argument("--openai-model")
     p.add_argument("--request-timeout-s", type=int)
     p.add_argument("--max-tokens", type=int)
     p.add_argument("--temperature", type=float)
 
+    # Parser settings (override env)
+    p.add_argument("--parser-max-concurrency", type=int)
+    p.add_argument("--parser-max-rpm", type=int)
+    p.add_argument("--parser-max-retries", type=int)
+    p.add_argument("--parser-max-doc-chars", type=int)
+
     # Logging
     p.add_argument("--log-level", default=None, help="Logging level (e.g., INFO, DEBUG)")
     p.add_argument("--log-format", default=None, choices=["plain", "json"], help="Log format")
+    p.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Enable DEBUG logs for the portfolio_advisor package",
+    )
+    p.add_argument(
+        "--agent-progress",
+        action="store_true",
+        help="Show LangGraph agent progress messages",
+    )
+    p.add_argument(
+        "--skip-llm-cache",
+        action="store_true",
+        help="Force LLM calls to bypass cache lookup but write results to cache",
+    )
 
     return p
 

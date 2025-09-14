@@ -1,68 +1,64 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
-from langchain_core.language_models.chat_models import BaseChatModel
+from ..llm import get_llm
 
 logger = logging.getLogger(__name__)
 
 
-def build_llm(
-    model: str,
-    temperature: float,
-    max_tokens: int | None,
-    api_key: str | None,
-    api_base: str | None,
-) -> BaseChatModel:
-    # Lazy import to keep optional dependency path clean
-    from langchain_google_genai import ChatGoogleGenerativeAI
-
-    if not api_key:
-        logger.warning("GEMINI_API_KEY not set; analyst will use placeholder output.")
-
-        # Create a dummy LLM-like object that returns canned responses
-        class DummyLLM(BaseChatModel):
-            @property
-            def _llm_type(self) -> str:  # type: ignore[override]
-                return "dummy"
-
-            def _generate(self, messages: Any, stop: Any | None = None, **kwargs: Any):  # type: ignore[override]
-                from langchain_core.messages import AIMessage
-                from langchain_core.outputs import ChatGeneration, ChatResult
-
-                text = "Placeholder analysis: no API key provided."
-                return ChatResult(generations=[ChatGeneration(message=AIMessage(content=text))])
-
-        return DummyLLM()
-
-    return ChatGoogleGenerativeAI(
-        model=model,
-        temperature=temperature,
-        max_output_tokens=max_tokens,
-        google_api_key=api_key,
-        **({"base_url": api_base} if api_base else {}),
-    )
+# LLM prompt template is defined at module level for discoverability.
+ANALYST_PROMPT_TEMPLATE = (
+    "You are a portfolio analyst. "
+    "Summarize portfolio holdings extracted from input documents. "
+    "Provide a concise, professional markdown summary covering: accounts, baskets, "
+    "identifier coverage, resolver outcomes (resolved vs unresolved), and notable "
+    "missing data. "
+    "Do not make recommendations.\n\n"
+    "Files: {files}\n"
+    "Plan steps: {plan_steps}\n"
+    "Resolver: {resolver_summary}\n\n"
+    "Holdings (JSON lines):\n{candidates}"
+)
 
 
 def analyst_node(state: dict) -> dict:
     settings = state["settings"]
-    llm = build_llm(
-        model=settings.gemini_model,
-        temperature=settings.temperature,
-        max_tokens=settings.max_tokens,
-        api_key=settings.gemini_api_key,
-        api_base=settings.gemini_api_base,
-    )
+    llm = get_llm(settings)
+    logger.info("Analyst agent start")
 
-    # In the MVP, produce a brief summary based on file names and plan
-    file_names = [p.name for p in state.get("files", [])]
+    # Produce a brief summary based on parsed candidates and plan
+    raw_docs = state.get("raw_docs", []) or []
+    file_descriptions = [
+        f"{d.get('name','')} ({d.get('mime_type','unknown')}, {d.get('source_bytes',0)} bytes)"
+        for d in raw_docs
+    ]
     plan = state.get("plan", {})
-    prompt = (
-        "You are a portfolio analyst. Given the input files and a simple plan, produce a short "
-        "placeholder analysis suitable for a markdown report."
-        f"\nFiles: {', '.join(file_names) if file_names else 'none'}"
-        f"\nPlan steps: {', '.join(plan.get('steps', []))}"
+    # Prefer resolved holdings but fallback to parsed candidates
+    resolved = state.get("resolved_holdings", []) or []
+    parsed = state.get("parsed_holdings", []) or []
+    unresolved = state.get("unresolved_entities", []) or []
+    candidates = resolved or parsed
+    # compact JSONL to avoid token bloat
+    if candidates:
+        try:
+            import json
+
+            cand_lines = "\n".join(json.dumps(c, separators=(",", ":")) for c in candidates[:200])
+        except Exception:  # pragma: no cover - defensive
+            cand_lines = "\n".join(str(c) for c in candidates[:200])
+    else:
+        cand_lines = "[none]"
+    resolver_summary = (
+        f"resolved={len(resolved)}, unresolved={len(unresolved)}"
+        if (resolved or unresolved)
+        else "no resolver data"
+    )
+    prompt = ANALYST_PROMPT_TEMPLATE.format(
+        files=", ".join(file_descriptions) if file_descriptions else "none",
+        plan_steps=", ".join(plan.get("steps", [])),
+        resolver_summary=resolver_summary,
+        candidates=cand_lines,
     )
 
     try:
@@ -72,4 +68,5 @@ def analyst_node(state: dict) -> dict:
         logger.warning("LLM call failed, using fallback: %s", exc)
         content = "Placeholder analysis due to LLM error."
 
+    logger.info("Analyst agent finished (%d chars)", len(content or ""))
     return {**state, "analysis": content}

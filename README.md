@@ -12,9 +12,9 @@ LangGraph-based, function-defined agents to analyze a portfolio and emit a minim
    source .venv/bin/activate
    ```
 
-3. Set up environment variables for Gemini (optional for stub run):
+3. Set up environment variables for OpenAI and parser (optional for stub run):
 
-   - Copy `.env.example` to `.env` and fill in values.
+   - Copy `env.example` to `.env` and fill in values.
 
 4. Prepare an input directory with one or more files (e.g., `positions.csv`).
 
@@ -31,9 +31,13 @@ The command prints the path to `analysis.md` in the output directory.
 Configuration is loaded from environment (and `.env` in development) and can be overridden on the CLI.
 
 - Required at runtime: `--input-dir`, `--output-dir`
-- Gemini (optional for stub): `GEMINI_API_KEY`, `GEMINI_API_BASE`, `GEMINI_MODEL`
+- OpenAI (optional for stub): `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`
 - Tuning: `REQUEST_TIMEOUT_S`, `MAX_TOKENS`, `TEMPERATURE`
 - Logging: `LOG_LEVEL`, `LOG_FORMAT` (plain|json)
+- Parser (LLM Parsing Agent):
+  - `PARSER_MAX_RETRIES` (default 2)
+  - `PARSER_MAX_DOC_CHARS` (default 20000)
+  - Note: Parallelism is controlled at the LangGraph level via fan-out/fan-in; there are no per-parser concurrency/RPM knobs.
 
 CLI overrides example:
 
@@ -41,9 +45,90 @@ CLI overrides example:
 portfolio-advisor \
   --input-dir ./inputs \
   --output-dir ./outputs \
-  --gemini-model gemini-1.5-pro \
+  --openai-model gpt-4o-mini \
   --temperature 0.2 \
   --log-format json
+```
+
+### Parser behavior
+
+- The ingestion node extracts plain text from inputs.
+- The graph dispatches per-document parse tasks using LangGraph fan-out (Send), invoking a single-item parser for each doc in parallel.
+- Each call asks the model to emit JSON matching the schema for candidate holdings and retries up to `PARSER_MAX_RETRIES` on validation errors. Input text is truncated to `PARSER_MAX_DOC_CHARS`.
+- Results are reduced via additive state channels and then summarized by the analyst node.
+
+## CLI parameters
+
+The `portfolio-advisor` CLI accepts the following parameters. All options can also be provided via environment variables by passing them through to the app entrypoint (see `env.example`).
+
+- `--input-dir` (required)
+  - Directory containing input files to analyze.
+  - No environment variable; must be provided via CLI.
+
+- `--output-dir` (required)
+  - Directory where outputs (e.g., `analysis.md`) will be written. Created if it does not exist.
+  - No environment variable; must be provided via CLI.
+
+- `--openai-api-key`
+  - API key for OpenAI.
+  - Env: `OPENAI_API_KEY`
+  - Default: empty (a stub LLM is used and returns placeholder text).
+
+- `--openai-base-url`
+  - Optional custom base URL for OpenAI-compatible API.
+  - Env: `OPENAI_BASE_URL`
+  - Default: empty (use library default).
+
+- `--openai-model`
+  - OpenAI model name.
+  - Env: `OPENAI_MODEL`
+  - Default: `gpt-4o-mini`.
+
+- `--request-timeout-s`
+  - Request timeout in seconds used by LLM calls.
+  - Env: `REQUEST_TIMEOUT_S`
+  - Default: `60`.
+
+- `--max-tokens`
+  - Maximum output tokens requested from the LLM. If unset, the model default is used.
+  - Env: `MAX_TOKENS`
+  - Default: empty/unset.
+
+- `--temperature`
+  - Sampling temperature for the LLM.
+  - Env: `TEMPERATURE`
+  - Default: `0.2`.
+
+- `--skip-llm-cache`
+  - Force LLM calls to bypass cache lookup but write results to the cache.
+  - Env: `SKIP_LLM_CAHCE=1` has the same effect.
+  - Cache DB persists at `./cache/langchain_cache.sqlite3`.
+
+- `--log-level`
+  - Logging level (e.g., `DEBUG`, `INFO`, `WARNING`).
+  - Env: `LOG_LEVEL`
+  - Default: `INFO`.
+
+- `--log-format`
+  - Logging format: `plain` or `json`.
+  - Env: `LOG_FORMAT`
+  - Default: `plain`.
+
+### Parser-related CLI flags
+
+The following flags override the corresponding environment variables:
+
+- `--parser-max-retries` → `PARSER_MAX_RETRIES` (default 2)
+- `--parser-max-doc-chars` → `PARSER_MAX_DOC_CHARS` (default 20000)
+
+You can combine them with other CLI options, for example:
+
+```bash
+portfolio-advisor \
+  --input-dir ./inputs \
+  --output-dir ./outputs \
+  --parser-max-retries 3 \
+  --parser-max-doc-chars 5000
 ```
 
 ## Development

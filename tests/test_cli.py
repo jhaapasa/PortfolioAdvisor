@@ -11,7 +11,7 @@ def test_cli_success(tmp_path: Path, capsys, monkeypatch):
     input_dir.mkdir()
     (input_dir / "positions.csv").write_text("symbol,shares\nAAPL,10\n", encoding="utf-8")
 
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     rc = main(
         [

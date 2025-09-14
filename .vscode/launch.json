@@ -16,7 +16,9 @@
         "--input-dir",
         "./input",
         "--output-dir",
-        "./output"
+        "./output",
+        "--verbose",
+        "--agent-progress"
       ],
       "console": "integratedTerminal",
       "justMyCode": true
