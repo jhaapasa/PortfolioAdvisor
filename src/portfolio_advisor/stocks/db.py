@@ -150,11 +150,13 @@ def append_ohlc_rows(existing: dict[str, Any], new_rows: list[dict[str, Any]]) -
 
 
 def compute_last_complete_trading_day(today_utc: dt.date | None = None) -> str:
-    # Minimal heuristic: use previous weekday; if weekend, roll back to Friday
+    """Return the most recent weekday prior to the given (or current) UTC date.
+
+    Always steps back at least one day from today, then rolls back through
+    weekends so the result is Monday–Friday.
+    """
     d = today_utc or dt.datetime.utcnow().date()
-    # If weekend, roll back to Friday
-    while d.weekday() >= 5:
-        d = d - dt.timedelta(days=1)
-    # Assume last complete day is previous weekday
-    d = d - dt.timedelta(days=1) if d == (today_utc or dt.datetime.utcnow().date()) else d
-    return d.isoformat()
+    candidate = d - dt.timedelta(days=1)
+    while candidate.weekday() >= 5:  # 5=Saturday, 6=Sunday
+        candidate -= dt.timedelta(days=1)
+    return candidate.isoformat()
