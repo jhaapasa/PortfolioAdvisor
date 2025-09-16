@@ -1,3 +1,5 @@
+"""Ingestion agent: discovers files and extracts normalized plain text units."""
+
 from __future__ import annotations
 
 import csv

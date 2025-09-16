@@ -1,3 +1,9 @@
+"""Application entrypoint for running the portfolio analysis graph.
+
+Builds `Settings` from environment + CLI overrides, configures logging, initializes
+the LangChain cache, and executes the LangGraph app to produce outputs.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -23,24 +29,20 @@ def analyze_portfolio(
 
     Returns the path to the generated output file.
     """
-    # Configure logging early using overrides if provided
-    log_level = str(overrides.pop("log_level", overrides.pop("LOG_LEVEL", "INFO")))
-    log_format = str(overrides.pop("log_format", overrides.pop("LOG_FORMAT", "plain")))
-    verbose = bool(overrides.pop("verbose", overrides.pop("VERBOSE", False)))
-    agent_progress = bool(overrides.pop("agent_progress", overrides.pop("AGENT_PROGRESS", False)))
-    configure_logging(
-        level=log_level,
-        fmt=log_format,
-        verbose=verbose,
-        agent_progress=agent_progress,
-    )
-
     # Build settings (env + overrides)
     try:
         settings = Settings(input_dir=input_dir, output_dir=output_dir, **overrides)
     except Exception as exc:
         raise ConfigurationError(str(exc)) from exc
     settings.ensure_directories()
+
+    # Configure logging using Settings (Settings/CLI override env defaults)
+    configure_logging(
+        level=settings.log_level,
+        fmt=settings.log_format,
+        verbose=bool(settings.verbose),
+        agent_progress=bool(settings.agent_progress),
+    )
 
     # Initialize global LangChain cache (SQLite) with optional read-bypass.
     try:
@@ -77,7 +79,7 @@ def analyze_portfolio(
     }
 
     app = build_graph()
-    if agent_progress:
+    if settings.agent_progress:
         # Stream state updates and log keys for simple progress visibility
         result = None
         try:

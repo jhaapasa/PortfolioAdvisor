@@ -1,3 +1,5 @@
+"""LLM utilities: build and share chat model instances with logging wrappers."""
+
 from __future__ import annotations
 
 import logging

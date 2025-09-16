@@ -1,3 +1,10 @@
+"""LangGraph application graph definition.
+
+The graph uses explicit fan-out via conditional edges for parsing and resolving.
+We insert lightweight "barrier" nodes marked with defer=True so downstream stages
+run exactly once after their respective fan-out stages complete.
+"""
+
 from __future__ import annotations
 
 import operator
@@ -25,23 +32,31 @@ class GraphState(TypedDict, total=False):
 
 
 def _dispatch_parse_tasks(state: GraphState):
+    """Fan-out: produce one parse task per ingested document."""
     docs = state.get("raw_docs", []) or []
     settings = state["settings"]
     return [Send("parse_one", {"settings": settings, "doc": d}) for d in docs]
 
 
 def _join_after_parse(_state: GraphState) -> dict:
-    # No-op node used as a deferred barrier to ensure downstream runs once.
+    """Barrier: no-op node used with defer=True so downstream runs once."""
     return {}
 
 
 def _dispatch_resolve_tasks(state: GraphState):
+    """Fan-out: produce one resolve task per parsed holding."""
     settings = state["settings"]
     holdings = state.get("parsed_holdings", []) or []
     return [Send("resolve_one", {"settings": settings, "holding": h}) for h in holdings]
 
 
 def build_graph() -> Any:
+    """Construct and compile the PortfolioAdvisor LangGraph.
+
+    The graph structure favors clarity: explicit dispatch nodes for fan-out and
+    explicit join barriers using defer=True to ensure single execution of
+    subsequent stages.
+    """
     graph = StateGraph(GraphState)
     graph.add_node("ingestion", ingestion_node)
     graph.add_node("planner", planner_node)

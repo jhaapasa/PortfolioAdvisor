@@ -20,8 +20,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--temperature", type=float)
 
     # Parser settings (override env)
-    p.add_argument("--parser-max-concurrency", type=int)
-    p.add_argument("--parser-max-rpm", type=int)
     p.add_argument("--parser-max-retries", type=int)
     p.add_argument("--parser-max-doc-chars", type=int)
 

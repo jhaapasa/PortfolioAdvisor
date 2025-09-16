@@ -1,3 +1,5 @@
+"""Resolver agent: normalizes parsed holdings using provider data when available."""
+
 from __future__ import annotations
 
 import logging
