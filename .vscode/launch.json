@@ -22,6 +22,31 @@
       ],
       "console": "integratedTerminal",
       "justMyCode": true
+    },
+    {
+      "name": "Update Stock (AAPL)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "portfolio_advisor.cli",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "env": {
+        "PYTHONPATH": "${workspaceFolder}/src"
+      },
+      "preLaunchTask": "Prepare I/O dirs",
+      "args": [
+        "--input-dir",
+        "./input",
+        "--output-dir",
+        "./output",
+        "--mode",
+        "stock",
+        "--ticker",
+        "AAPL",
+        "--verbose"
+      ],
+      "console": "integratedTerminal",
+      "justMyCode": true
     }
   ]
 }
