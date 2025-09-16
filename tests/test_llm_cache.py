@@ -13,7 +13,7 @@ def test_cache_db_created_default(tmp_path, monkeypatch):
 
     # Ensure stub LLM path
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.delenv("SKIP_LLM_CAHCE", raising=False)
+    monkeypatch.delenv("SKIP_LLM_CACHE", raising=False)
 
     analyze_portfolio(str(in_dir), str(out_dir))
 
@@ -29,7 +29,7 @@ def test_skip_cache_bypasses_lookup_but_writes(tmp_path, monkeypatch):
 
     # Ensure stub LLM path and enable skip mode
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.setenv("SKIP_LLM_CAHCE", "1")
+    monkeypatch.setenv("SKIP_LLM_CACHE", "1")
 
     analyze_portfolio(str(in_dir), str(out_dir))
 

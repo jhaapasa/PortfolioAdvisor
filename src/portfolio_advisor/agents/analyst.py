@@ -1,3 +1,5 @@
+"""Analyst agent: composes a concise narrative summary from graph results."""
+
 from __future__ import annotations
 
 import logging

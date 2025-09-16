@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     verbose: bool = Field(default=False, alias="VERBOSE")
     agent_progress: bool = Field(default=False, alias="AGENT_PROGRESS")
     # Caching
-    skip_llm_cache: bool = Field(default=False, alias="SKIP_LLM_CAHCE")
+    skip_llm_cache: bool = Field(default=False, alias="SKIP_LLM_CACHE")
 
     model_config = SettingsConfigDict(
         env_file=".env",

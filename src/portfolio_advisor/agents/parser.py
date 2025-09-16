@@ -1,3 +1,5 @@
+"""Parser agent: prompts an LLM to extract candidate holdings as strict JSON."""
+
 from __future__ import annotations
 
 import json

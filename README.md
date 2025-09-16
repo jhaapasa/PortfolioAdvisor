@@ -2,6 +2,8 @@
 
 LangGraph-based, function-defined agents to analyze a portfolio and emit a minimal report.
 
+See the architecture overview in `docs/Architecture.md` for a deeper dive.
+
 ## Quickstart
 
 1. Ensure Python 3.13.7 is available (e.g., via pyenv) and clone the repo.
@@ -101,7 +103,7 @@ The `portfolio-advisor` CLI accepts the following parameters. All options can al
 
 - `--skip-llm-cache`
   - Force LLM calls to bypass cache lookup but write results to the cache.
-  - Env: `SKIP_LLM_CAHCE=1` has the same effect.
+  - Env: `SKIP_LLM_CACHE=1` has the same effect.
   - Cache DB persists at `./cache/langchain_cache.sqlite3`.
 
 - `--log-level`
