@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from portfolio_advisor.config import Settings
@@ -10,7 +10,7 @@ from portfolio_advisor.services.polygon_client import PolygonClient
 
 
 def _ts_ms(yyyy_mm_dd: str) -> int:
-    dt = datetime.strptime(yyyy_mm_dd, "%Y-%m-%d").replace(tzinfo=UTC)
+    dt = datetime.strptime(yyyy_mm_dd, "%Y-%m-%d").replace(tzinfo=timezone.utc)
     return int(dt.timestamp() * 1000)
 
 
@@ -38,9 +38,7 @@ def test_update_ticker_pipeline_writes_all_artifacts(tmp_path, monkeypatch):
         },
     ]
 
-    def fake_list_aggs_daily(
-        self, ticker, from_date, to_date, adjusted=True, limit=50000
-    ):  # noqa: ARG001
+    def fake_list_aggs_daily(self, ticker, from_date, to_date, adjusted=True, limit=50000):  # noqa: ARG001
         return iter(bars)
 
     monkeypatch.setattr(PolygonClient, "list_aggs_daily", fake_list_aggs_daily)

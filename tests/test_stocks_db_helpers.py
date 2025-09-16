@@ -1,14 +1,37 @@
 from __future__ import annotations
 
+import datetime as dt
+
 from portfolio_advisor.stocks.db import (
     StockPaths,
     append_ohlc_rows,
+    compute_last_complete_trading_day,
     ensure_ticker_scaffold,
     read_meta,
     read_primary_ohlc,
     write_meta,
     write_primary_ohlc,
 )
+
+
+def test_compute_last_complete_trading_day_weekday():
+    # Tuesday -> Monday
+    tuesday = dt.date(2025, 9, 16)  # Tuesday
+    assert compute_last_complete_trading_day(tuesday) == "2025-09-15"
+
+
+def test_compute_last_complete_trading_day_monday():
+    # Monday -> Friday
+    monday = dt.date(2025, 9, 15)  # Monday
+    assert compute_last_complete_trading_day(monday) == "2025-09-12"
+
+
+def test_compute_last_complete_trading_day_weekend():
+    # Saturday -> Friday, Sunday -> Friday
+    saturday = dt.date(2025, 9, 13)  # Saturday
+    sunday = dt.date(2025, 9, 14)  # Sunday
+    assert compute_last_complete_trading_day(saturday) == "2025-09-12"
+    assert compute_last_complete_trading_day(sunday) == "2025-09-12"
 
 
 def test_defaults_and_write_read_roundtrip(tmp_path):
