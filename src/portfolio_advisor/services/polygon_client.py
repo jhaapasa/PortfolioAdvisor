@@ -68,3 +68,71 @@ class PolygonClient:
                 yield dict(item.__dict__)
             else:
                 yield dict(item)
+
+    def list_aggs_daily(
+        self,
+        ticker: str,
+        from_date: str,
+        to_date: str,
+        adjusted: bool = True,
+        limit: int = 50000,
+    ) -> Iterable[dict[str, Any]]:
+        """Yield normalized daily OHLCV bars for a ticker between inclusive dates.
+
+        Parameters use ISO dates (YYYY-MM-DD). Returns dicts with fields:
+        {date, open, high, low, close, volume, vwap?}
+        """
+        client = self._ensure_client()
+        # Timespan enum compatible with string "day"
+        try:
+            from polygon.enums import Timespan  # type: ignore
+
+            timespan = Timespan.DAY
+        except Exception:  # pragma: no cover - fallback if enums change
+            timespan = "day"
+
+        for bar in client.list_aggs(
+            ticker=ticker,
+            multiplier=1,
+            timespan=timespan,
+            from_=from_date,
+            to=to_date,
+            adjusted=adjusted,
+            limit=limit,
+        ):
+            # Normalize across possible return types
+            if hasattr(bar, "model_dump"):
+                b = bar.model_dump()
+            elif hasattr(bar, "__dict__"):
+                b = dict(bar.__dict__)
+            else:
+                b = dict(bar)
+
+            # Support both raw JSON short keys and client-mapped verbose keys
+            # Timestamp (ms)
+            ts = b.get("t") or b.get("timestamp")
+            date_str: str | None = None
+            if ts is not None:
+                try:
+                    import datetime as _dt
+
+                    date_str = _dt.datetime.utcfromtimestamp(int(ts) / 1000).strftime("%Y-%m-%d")
+                except Exception:  # pragma: no cover - defensive
+                    date_str = None
+
+            open_v = b.get("o") if b.get("o") is not None else b.get("open")
+            high_v = b.get("h") if b.get("h") is not None else b.get("high")
+            low_v = b.get("l") if b.get("l") is not None else b.get("low")
+            close_v = b.get("c") if b.get("c") is not None else b.get("close")
+            volume_v = b.get("v") if b.get("v") is not None else b.get("volume")
+            vwap_v = b.get("vw") if b.get("vw") is not None else b.get("vwap")
+
+            yield {
+                "date": date_str,
+                "open": float(open_v or 0.0),
+                "high": float(high_v or 0.0),
+                "low": float(low_v or 0.0),
+                "close": float(close_v or 0.0),
+                "volume": int(volume_v or 0),
+                "vwap": float(vwap_v) if vwap_v is not None else None,
+            }
