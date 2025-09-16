@@ -41,4 +41,3 @@ def test_list_aggs_daily_normalizes_output(monkeypatch):
     assert r0["open"] == 10.0 and r0["volume"] == 100 and r0["vwap"] == 10.2
     assert r1["date"] == "2025-01-04"
     assert r1["close"] == 11.0 and r1["vwap"] is None
-

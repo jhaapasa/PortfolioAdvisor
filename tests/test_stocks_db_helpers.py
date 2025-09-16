@@ -1,8 +1,5 @@
 from __future__ import annotations
 
-import json
-from pathlib import Path
-
 from portfolio_advisor.stocks.db import (
     StockPaths,
     append_ohlc_rows,
@@ -41,4 +38,3 @@ def test_defaults_and_write_read_roundtrip(tmp_path):
     saved = read_primary_ohlc(paths, "ZZZ")
     assert saved["coverage"]["start_date"] == "2025-01-01"
     assert saved["coverage"]["end_date"] == "2025-01-02"
-
