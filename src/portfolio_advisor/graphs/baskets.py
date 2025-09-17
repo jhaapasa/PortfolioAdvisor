@@ -12,6 +12,7 @@ from ..utils.slug import instrument_id_to_slug
 class BasketState(TypedDict, total=False):
     settings: Any
     basket: dict
+    _collected: dict
     metrics: dict
     report_md: str
     basket_report: dict
