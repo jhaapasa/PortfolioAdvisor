@@ -18,6 +18,14 @@ from .agents.ingestion import ingestion_node
 from .agents.parser import parse_one_node
 from .agents.planner import planner_node
 from .agents.resolver import resolve_one_node
+from .graphs.baskets import build_basket_graph
+from .graphs.stocks import update_all_for_portfolio
+from .portfolio.persistence import (
+    append_history_diffs,
+    write_baskets_views,
+    write_current_holdings,
+    write_portfolio_header,
+)
 
 
 class GraphState(TypedDict, total=False):
@@ -29,6 +37,8 @@ class GraphState(TypedDict, total=False):
     unresolved_entities: Annotated[list[dict], operator.add]
     errors: Annotated[list[str], operator.add]
     analysis: str
+    portfolio_persisted: bool
+    basket_reports: Annotated[list[dict], operator.add]
 
 
 def _dispatch_parse_tasks(state: GraphState):
@@ -70,6 +80,107 @@ def build_graph() -> Any:
     graph.add_node("dispatch_resolve", _noop)
     graph.add_node("resolve_one", resolve_one_node)
     graph.add_node("join_after_resolve", _join_after_parse, defer=True)
+    def _commit_portfolio_node(state: GraphState) -> dict:
+        settings = state["settings"]
+        holdings = state.get("resolved_holdings", []) or []
+        if not holdings:
+            return {"portfolio_persisted": False}
+        # Read previous snapshot if exists
+        from pathlib import Path
+        from .portfolio.persistence import PortfolioPaths
+
+        p = PortfolioPaths(root=Path(getattr(settings, "portfolio_dir")))
+        prev = []
+        try:
+            import json
+
+            if p.holdings_json().exists():
+                with p.holdings_json().open("r", encoding="utf-8") as fh:
+                    prev = json.load(fh)
+        except Exception:
+            prev = []
+        # Write current state
+        write_current_holdings(getattr(settings, "portfolio_dir"), holdings)
+        write_portfolio_header(getattr(settings, "portfolio_dir"), holdings)
+        write_baskets_views(getattr(settings, "portfolio_dir"), holdings)
+        # Derive tickers and baskets for downstream
+        tickers = sorted({h.get("primary_ticker") for h in holdings if h.get("primary_ticker")})
+        # Load baskets index
+        import json as _json
+
+        baskets_index_path = p.baskets_index_json()
+        baskets: list[dict] = []
+        if baskets_index_path.exists():
+            try:
+                with baskets_index_path.open("r", encoding="utf-8") as fh:
+                    idx = _json.load(fh)
+                for b in idx:
+                    label = b.get("label")
+                    slug = b.get("slug")
+                    # tickers belonging to this basket
+                    def _slugify_local(text: str) -> str:
+                        s = (text or "").lower()
+                        out = []
+                        prev_dash = False
+                        for ch in s:
+                            if ch.isalnum():
+                                out.append(ch)
+                                prev_dash = False
+                            else:
+                                if not prev_dash:
+                                    out.append("-")
+                                prev_dash = True
+                        joined = "".join(out).strip("-")
+                        while "--" in joined:
+                            joined = joined.replace("--", "-")
+                        return joined or "none"
+
+                    btickers = [
+                        h.get("primary_ticker")
+                        for h in holdings
+                        if _slugify_local(str(h.get("basket") or "")) == slug
+                        and h.get("primary_ticker")
+                    ]
+                    baskets.append({
+                        "id": b.get("id"),
+                        "label": label,
+                        "slug": slug,
+                        "tickers": sorted(set(btickers)),
+                    })
+            except Exception:
+                baskets = []
+
+        # Append history diffs
+        dates = [str(h.get("as_of")) for h in holdings if h.get("as_of")]
+        as_of = max(dates) if dates else None
+        append_history_diffs(getattr(settings, "portfolio_dir"), prev, holdings, as_of)
+
+        # Kick off stocks updates (sequential for now)
+        try:
+            update_all_for_portfolio(settings, tickers)
+        except Exception:
+            # Non-fatal; continue
+            pass
+
+        # Fan out baskets using a compiled baskets graph
+        compiled_basket = build_basket_graph()
+        reports: list[dict] = []
+        for b in baskets:
+            try:
+                out = compiled_basket.invoke({"settings": settings, "basket": b})
+                rep = out.get("basket_report")
+                if rep:
+                    reports.append(rep)
+            except Exception:
+                continue
+        return {
+            "portfolio_persisted": True,
+            "tickers": tickers,
+            "baskets": baskets,
+            "basket_reports": reports,
+        }
+
+    graph.add_node("commit_portfolio", _commit_portfolio_node)
     graph.add_node("analyst", analyst_node, defer=True)
 
     graph.set_entry_point("ingestion")
@@ -80,7 +191,8 @@ def build_graph() -> Any:
     graph.add_edge("join_after_parse", "dispatch_resolve")
     graph.add_conditional_edges("dispatch_resolve", _dispatch_resolve_tasks)
     graph.add_edge("resolve_one", "join_after_resolve")
-    graph.add_edge("join_after_resolve", "analyst")
+    graph.add_edge("join_after_resolve", "commit_portfolio")
+    graph.add_edge("commit_portfolio", "analyst")
     graph.add_edge("analyst", END)
 
     return graph.compile()

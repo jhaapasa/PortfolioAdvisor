@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     # IO
     input_dir: str
     output_dir: str
+    # Optional override; defaults to <output_dir>/portfolio when unset
+    portfolio_dir: str | None = Field(default=None, alias="PORTFOLIO_DIR")
 
     # OpenAI / LLM
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
@@ -86,3 +88,7 @@ class Settings(BaseSettings):
             msg = f"Input directory does not exist or is not a directory: {self.input_dir}"
             raise FileNotFoundError(msg)
         os.makedirs(self.output_dir, exist_ok=True)
+        # Default portfolio_dir if not provided
+        if not self.portfolio_dir:
+            self.portfolio_dir = os.path.join(self.output_dir, "portfolio")
+        os.makedirs(self.portfolio_dir, exist_ok=True)
