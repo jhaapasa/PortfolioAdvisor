@@ -18,7 +18,8 @@ def compute_trailing_returns(ohlc: dict[str, Any]) -> dict[str, Any]:
         return (ct / c0) - 1.0
 
     return {
-        "ticker": ohlc.get("ticker"),
+        "instrument_id": ohlc.get("instrument_id"),
+        "primary_ticker": ohlc.get("primary_ticker"),
         "as_of": ohlc.get("coverage", {}).get("end_date"),
         "windows": {
             "d5": trailing(5),
@@ -52,7 +53,8 @@ def compute_volatility_annualized(ohlc: dict[str, Any], window: int = 21) -> dic
         else:
             vol = None
     return {
-        "ticker": ohlc.get("ticker"),
+        "instrument_id": ohlc.get("instrument_id"),
+        "primary_ticker": ohlc.get("primary_ticker"),
         "as_of": ohlc.get("coverage", {}).get("end_date"),
         "window": window,
         "annualization_factor": "sqrt(252)",
@@ -81,7 +83,8 @@ def compute_sma_series(ohlc: dict[str, Any], windows: list[int] | None = None) -
             start = r.get("date")
             break
     return {
-        "ticker": ohlc.get("ticker"),
+        "instrument_id": ohlc.get("instrument_id"),
+        "primary_ticker": ohlc.get("primary_ticker"),
         "windows": win,
         "data": out_rows,
         "coverage": {

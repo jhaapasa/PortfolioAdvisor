@@ -11,12 +11,12 @@ def test_baskets_metrics_and_outputs(tmp_path: Path):
     out_dir = tmp_path / "out"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Prepare minimal returns.json for two tickers
+    # Prepare minimal returns.json under instrument_id slugs (fallback to ticker for this test)
     base = out_dir / "stocks" / "tickers"
     for t, d5 in ("AAPL", 0.02), ("NVDA", -0.01):
         tdir = base / t / "analysis"
         tdir.mkdir(parents=True, exist_ok=True)
-        content = {"ticker": t, "as_of": "2025-09-15", "windows": {"d5": d5}}
+        content = {"primary_ticker": t, "as_of": "2025-09-15", "windows": {"d5": d5}}
         (tdir / "returns.json").write_text(json.dumps(content), encoding="utf-8")
 
     settings = Settings(input_dir=str(tmp_path), output_dir=str(out_dir))

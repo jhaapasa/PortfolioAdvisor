@@ -19,7 +19,7 @@ from .agents.parser import parse_one_node
 from .agents.planner import planner_node
 from .agents.resolver import resolve_one_node
 from .graphs.baskets import build_basket_graph
-from .graphs.stocks import update_all_for_portfolio
+from .graphs.stocks import update_all_for_instruments
 from .portfolio.persistence import (
     append_history_diffs,
     write_baskets_views,
@@ -103,8 +103,18 @@ def build_graph() -> Any:
         write_current_holdings(getattr(settings, "portfolio_dir"), holdings)
         write_portfolio_header(getattr(settings, "portfolio_dir"), holdings)
         write_baskets_views(getattr(settings, "portfolio_dir"), holdings)
-        # Derive tickers and baskets for downstream
-        tickers = sorted({h.get("primary_ticker") for h in holdings if h.get("primary_ticker")})
+        # Derive instruments and baskets for downstream
+        instruments = []
+        seen_iids: set[str] = set()
+        for h in holdings:
+            iid = str(h.get("instrument_id") or "")
+            if not iid or iid in seen_iids:
+                continue
+            seen_iids.add(iid)
+            instruments.append({
+                "instrument_id": iid,
+                "primary_ticker": h.get("primary_ticker"),
+            })
         # Load baskets index
         import json as _json
 
@@ -117,7 +127,7 @@ def build_graph() -> Any:
                 for b in idx:
                     label = b.get("label")
                     slug = b.get("slug")
-                    # tickers belonging to this basket
+                    # instruments belonging to this basket
                     def _slugify_local(text: str) -> str:
                         s = (text or "").lower()
                         out = []
@@ -135,17 +145,24 @@ def build_graph() -> Any:
                             joined = joined.replace("--", "-")
                         return joined or "none"
 
-                    btickers = [
-                        h.get("primary_ticker")
-                        for h in holdings
-                        if _slugify_local(str(h.get("basket") or "")) == slug
-                        and h.get("primary_ticker")
-                    ]
+                    binstruments = []
+                    seen: set[str] = set()
+                    for h in holdings:
+                        if _slugify_local(str(h.get("basket") or "")) != slug:
+                            continue
+                        iid = str(h.get("instrument_id") or "")
+                        if not iid or iid in seen:
+                            continue
+                        seen.add(iid)
+                        binstruments.append({
+                            "instrument_id": iid,
+                            "primary_ticker": h.get("primary_ticker"),
+                        })
                     baskets.append({
                         "id": b.get("id"),
                         "label": label,
                         "slug": slug,
-                        "tickers": sorted(set(btickers)),
+                        "instruments": binstruments,
                     })
             except Exception:
                 baskets = []
@@ -157,7 +174,7 @@ def build_graph() -> Any:
 
         # Kick off stocks updates (sequential for now)
         try:
-            update_all_for_portfolio(settings, tickers)
+            update_all_for_instruments(settings, instruments)
         except Exception:
             # Non-fatal; continue
             pass
@@ -175,7 +192,7 @@ def build_graph() -> Any:
                 continue
         return {
             "portfolio_persisted": True,
-            "tickers": tickers,
+            "instruments": instruments,
             "baskets": baskets,
             "basket_reports": reports,
         }

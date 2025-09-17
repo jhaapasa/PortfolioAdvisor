@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from portfolio_advisor.config import Settings
-from portfolio_advisor.graphs.stocks import update_ticker
+from portfolio_advisor.graphs.stocks import update_instrument
 from portfolio_advisor.services.polygon_client import PolygonClient
 
 
@@ -53,10 +53,10 @@ def test_update_ticker_pipeline_writes_all_artifacts(tmp_path, monkeypatch):
     settings = Settings(input_dir=str(inp_dir), output_dir=str(out_dir), verbose=True)
 
     # Act
-    update_ticker(settings, ticker="TEST")
+    update_instrument(settings, instrument={"instrument_id": "cid:stocks:us:composite:TEST", "primary_ticker": "TEST"})
 
     # Assert: all expected artifacts exist and have reasonable content
-    base = Path(out_dir) / "stocks" / "tickers" / "TEST"
+    base = Path(out_dir) / "stocks" / "tickers" / "cid-stocks-us-composite-test"
     primary = base / "primary" / "ohlc_daily.json"
     returns = base / "analysis" / "returns.json"
     vol = base / "analysis" / "volatility.json"
@@ -75,7 +75,7 @@ def test_update_ticker_pipeline_writes_all_artifacts(tmp_path, monkeypatch):
     with returns.open("r", encoding="utf-8") as fh:
         r = json.load(fh)
     assert r["depends_on"] == ["primary.ohlc_daily"]
-    assert r["ticker"] == "TEST"
+    assert r["primary_ticker"] == "TEST"
 
     with vol.open("r", encoding="utf-8") as fh:
         v = json.load(fh)
@@ -89,5 +89,5 @@ def test_update_ticker_pipeline_writes_all_artifacts(tmp_path, monkeypatch):
 
     with meta.open("r", encoding="utf-8") as fh:
         m = json.load(fh)
-    assert m["ticker"] == "TEST"
+    assert m["primary_ticker"] == "TEST"
     assert m["artifacts"]["primary.ohlc_daily"]["last_updated"]

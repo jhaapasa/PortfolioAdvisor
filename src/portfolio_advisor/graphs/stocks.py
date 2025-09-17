@@ -23,17 +23,18 @@ from ..stocks.db import (
     write_meta,
     write_primary_ohlc,
 )
+from ..utils.slug import instrument_id_to_slug
 
 
 class StockState(TypedDict, total=False):
     settings: Any
-    ticker: str
+    instrument: dict
     requested_artifacts: list[str]
     updates_needed: list[str]
 
 
 def _resolve_ticker_node(state: StockState) -> dict:
-    # For now assume input ticker is canonical already.
+    # Identity already canonical in instrument_id; nothing to do.
     return {}
 
 
@@ -41,10 +42,11 @@ def _check_db_state_node(state: StockState) -> dict:
     settings = state["settings"]
     s: Settings = settings
     paths = StockPaths(root=(Path(s.output_dir) / "stocks"))
-    ticker = state["ticker"]
+    instrument = state["instrument"]
+    slug = instrument_id_to_slug(str(instrument.get("instrument_id")))
 
-    ensure_ticker_scaffold(paths, ticker)
-    read_meta(paths, ticker)
+    ensure_ticker_scaffold(paths, slug)
+    read_meta(paths, slug)
     requested = state.get("requested_artifacts") or [
         "primary.ohlc_daily",
         "analysis.returns",
@@ -65,7 +67,10 @@ def _check_db_state_node(state: StockState) -> dict:
 
 def _fetch_primary_node(state: StockState) -> dict:
     settings: Settings = state["settings"]
-    ticker = state["ticker"]
+    instrument = state["instrument"]
+    iid = str(instrument.get("instrument_id"))
+    ticker = str(instrument.get("primary_ticker"))
+    slug = instrument_id_to_slug(iid)
     paths = StockPaths(root=(Path(settings.output_dir) / "stocks"))
 
     client = PolygonClient(
@@ -75,7 +80,7 @@ def _fetch_primary_node(state: StockState) -> dict:
     )
 
     # Determine date range: fetch full history if none, else from last coverage end + 1 day
-    current = read_primary_ohlc(paths, ticker)
+    current = read_primary_ohlc(paths, slug)
     start_date = current.get("coverage", {}).get("end_date")
     if start_date:
         # next day after end_date
@@ -90,60 +95,70 @@ def _fetch_primary_node(state: StockState) -> dict:
         merged = append_ohlc_rows(current, new_rows)
     else:
         merged = current
-    merged["ticker"] = ticker
-    write_primary_ohlc(paths, ticker, merged)
+    merged["instrument_id"] = iid
+    merged["primary_ticker"] = ticker
+    write_primary_ohlc(paths, slug, merged)
     return {}
 
 
 def _compute_returns_node(state: StockState) -> dict:
     settings: Settings = state["settings"]
-    ticker = state["ticker"]
+    instrument = state["instrument"]
+    slug = instrument_id_to_slug(str(instrument.get("instrument_id")))
     paths = StockPaths(root=(Path(settings.output_dir) / "stocks"))
-    ohlc = read_primary_ohlc(paths, ticker)
+    ohlc = read_primary_ohlc(paths, slug)
     returns = compute_trailing_returns(ohlc)
     from ..stocks.db import _write_json, utcnow_iso  # reuse private helper within package
 
     out = {**returns, "generated_at": utcnow_iso()}
-    _write_json(paths.analysis_returns_json(ticker), out)
+    _write_json(paths.analysis_returns_json(slug), out)
     return {}
 
 
 def _compute_volatility_node(state: StockState) -> dict:
     settings: Settings = state["settings"]
-    ticker = state["ticker"]
+    instrument = state["instrument"]
+    slug = instrument_id_to_slug(str(instrument.get("instrument_id")))
     paths = StockPaths(root=(Path(settings.output_dir) / "stocks"))
-    ohlc = read_primary_ohlc(paths, ticker)
+    ohlc = read_primary_ohlc(paths, slug)
     vol = compute_volatility_annualized(ohlc, window=21)
     from ..stocks.db import _write_json, utcnow_iso
 
     out = {**vol, "generated_at": utcnow_iso()}
-    _write_json(paths.analysis_volatility_json(ticker), out)
+    _write_json(paths.analysis_volatility_json(slug), out)
     return {}
 
 
 def _compute_sma_node(state: StockState) -> dict:
     settings: Settings = state["settings"]
-    ticker = state["ticker"]
+    instrument = state["instrument"]
+    slug = instrument_id_to_slug(str(instrument.get("instrument_id")))
     paths = StockPaths(root=(Path(settings.output_dir) / "stocks"))
-    ohlc = read_primary_ohlc(paths, ticker)
+    ohlc = read_primary_ohlc(paths, slug)
     sma = compute_sma_series(ohlc)
     from ..stocks.db import _write_json, utcnow_iso
 
     out = {**sma, "generated_at": utcnow_iso()}
-    _write_json(paths.analysis_sma_json(ticker), out)
+    _write_json(paths.analysis_sma_json(slug), out)
     return {}
 
 
 def _commit_metadata_node(state: StockState) -> dict:
     settings: Settings = state["settings"]
-    ticker = state["ticker"]
+    instrument = state["instrument"]
+    iid = str(instrument.get("instrument_id"))
+    ticker = str(instrument.get("primary_ticker"))
+    slug = instrument_id_to_slug(iid)
     paths = StockPaths(root=(Path(settings.output_dir) / "stocks"))
-    meta = read_meta(paths, ticker)
+    meta = read_meta(paths, slug)
     # Set last complete trading day to primary coverage end date when available
-    ohlc = read_primary_ohlc(paths, ticker)
+    ohlc = read_primary_ohlc(paths, slug)
     end_date = (ohlc.get("coverage") or {}).get("end_date")
     if end_date:
         meta["last_complete_trading_day"] = end_date
+    meta["instrument_id"] = iid
+    meta["primary_ticker"] = ticker
+    meta["slug"] = slug
     meta.setdefault("artifacts", {})
     for art in (
         "primary.ohlc_daily",
@@ -152,7 +167,7 @@ def _commit_metadata_node(state: StockState) -> dict:
         "analysis.sma_20_50_100_200",
     ):
         meta["artifacts"].setdefault(art, {})["last_updated"] = utcnow_iso()
-    write_meta(paths, ticker, meta)
+    write_meta(paths, slug, meta)
     return {}
 
 
@@ -178,18 +193,18 @@ def build_stocks_graph() -> Any:
     return graph.compile()
 
 
-def update_ticker(
-    settings: Settings, ticker: str, requested_artifacts: list[str] | None = None
+def update_instrument(
+    settings: Settings, instrument: dict, requested_artifacts: list[str] | None = None
 ) -> None:
     compiled = build_stocks_graph()
-    state: StockState = {"settings": settings, "ticker": ticker}
+    state: StockState = {"settings": settings, "instrument": instrument}
     if requested_artifacts:
         state["requested_artifacts"] = requested_artifacts
     compiled.invoke(state)
 
 
-def update_all_for_portfolio(
-    settings: Settings, tickers: list[str], requested_artifacts: list[str] | None = None
+def update_all_for_instruments(
+    settings: Settings, instruments: list[dict], requested_artifacts: list[str] | None = None
 ) -> None:
-    for t in tickers:
-        update_ticker(settings, t, requested_artifacts=requested_artifacts)
+    for inst in instruments:
+        update_instrument(settings, inst, requested_artifacts=requested_artifacts)

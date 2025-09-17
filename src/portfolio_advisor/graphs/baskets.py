@@ -6,6 +6,7 @@ from typing import Any, TypedDict
 from langgraph.graph import END, StateGraph
 
 from ..config import Settings
+from ..utils.slug import instrument_id_to_slug
 
 
 class BasketState(TypedDict, total=False):
@@ -20,8 +21,8 @@ def _collect_inputs_node(state: BasketState) -> dict:
     s: Settings = state["settings"]
     basket = state["basket"]
     sl: str = basket.get("slug", "")
-    # Prefer persisted positions for an authoritative list of tickers in the basket
-    derived_tickers: list[str] = []
+    # Prefer persisted positions for an authoritative list of instruments in the basket
+    derived_instruments: list[dict] = []
     try:
         portfolio_dir = getattr(s, "portfolio_dir")
         pos_path = Path(str(portfolio_dir)) / "baskets" / sl / "positions.json"
@@ -29,17 +30,36 @@ def _collect_inputs_node(state: BasketState) -> dict:
             import json as _json
 
             items = _json.loads(pos_path.read_text(encoding="utf-8"))
-            cand = [str(it.get("primary_ticker") or "").strip() for it in items]
-            derived_tickers = sorted({t for t in cand if t})
+            seen: set[str] = set()
+            out: list[dict] = []
+            for it in items:
+                iid = str(it.get("instrument_id") or "").strip()
+                pt = str(it.get("primary_ticker") or "").strip()
+                if not iid:
+                    continue
+                if iid in seen:
+                    continue
+                seen.add(iid)
+                out.append({"instrument_id": iid, "primary_ticker": pt})
+            derived_instruments = out
     except Exception:  # pragma: no cover - best effort
-        derived_tickers = []
+        derived_instruments = []
 
-    tickers: list[str] = derived_tickers or (basket.get("tickers", []) or [])
+    instruments: list[dict] = derived_instruments or (basket.get("instruments", []) or [])
+    if not instruments:
+        tickers = basket.get("tickers", []) or []
+        if tickers:
+            instruments = [
+                {"instrument_id": None, "primary_ticker": str(t).strip()} for t in tickers if t
+            ]
     base = Path(s.output_dir) / "stocks" / "tickers"
     rows: list[dict[str, Any]] = []
     as_of = None
-    for t in tickers:
-        ret_path = base / t / "analysis" / "returns.json"
+    for inst in instruments:
+        iid = str(inst.get("instrument_id") or "")
+        pt = str(inst.get("primary_ticker") or "")
+        slug = instrument_id_to_slug(iid) if iid else pt
+        ret_path = base / slug / "analysis" / "returns.json"
         d1 = None
         d5 = None
         try:
@@ -56,7 +76,7 @@ def _collect_inputs_node(state: BasketState) -> dict:
             pass
         # Fallback: derive d1/d5 from primary OHLC if needed
         if d1 is None or d5 is None:
-            ohlc_path = base / t / "primary" / "ohlc_daily.json"
+            ohlc_path = base / slug / "primary" / "ohlc_daily.json"
             try:
                 if ohlc_path.exists():
                     import json as _json
@@ -81,7 +101,7 @@ def _collect_inputs_node(state: BasketState) -> dict:
                 pass
         # Only include row if we have at least one metric
         if d1 is not None or d5 is not None:
-            rows.append({"ticker": t, "d1": d1, "d5": d5})
+            rows.append({"instrument_id": iid or None, "primary_ticker": pt, "d1": d1, "d5": d5})
     return {"_collected": {"rows": rows, "as_of": as_of, "slug": sl}}
 
 
@@ -104,12 +124,12 @@ def _compute_metrics_node(state: BasketState) -> dict:
     def _top(key: str, reverse: bool) -> list[str]:
         present = [r for r in rows if r.get(key) is not None]
         present.sort(key=lambda r: float(r[key]), reverse=reverse)
-        return [r["ticker"] for r in present[:3]]
+        return [r["instrument_id"] for r in present[:3]]
 
     metrics = {
         "basket": {"id": basket.get("id"), "label": basket.get("label"), "slug": basket.get("slug")},
         "as_of": as_of,
-        "tickers": rows,
+        "instruments": rows,
         "averages": {"d1": d1_avg, "d5": d5_avg},
         "top_movers": {
             "d1_up": _top("d1", True),

@@ -36,6 +36,7 @@ class StockPaths:
     root: Path
 
     def ticker_dir(self, ticker: str) -> Path:
+        # Parameter represents the folder slug for the instrument (instrument_id slug)
         return self.root / "tickers" / ticker
 
     def meta_json(self, ticker: str) -> Path:
@@ -82,27 +83,30 @@ def utcnow_iso() -> str:
     return dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
 
 
-def read_meta(paths: StockPaths, ticker: str) -> dict[str, Any]:
-    meta_path = paths.meta_json(ticker)
+def read_meta(paths: StockPaths, slug: str) -> dict[str, Any]:
+    meta_path = paths.meta_json(slug)
     data = _read_json(meta_path) or {}
     if not data:
         data = {
-            "ticker": ticker,
+            "slug": slug,
+            "instrument_id": None,
+            "primary_ticker": None,
             "last_complete_trading_day": None,
             "artifacts": {},
         }
     return data
 
 
-def write_meta(paths: StockPaths, ticker: str, meta: dict[str, Any]) -> None:
-    _write_json(paths.meta_json(ticker), meta)
+def write_meta(paths: StockPaths, slug: str, meta: dict[str, Any]) -> None:
+    _write_json(paths.meta_json(slug), meta)
 
 
-def read_primary_ohlc(paths: StockPaths, ticker: str) -> dict[str, Any]:
-    data = _read_json(paths.primary_ohlc_json(ticker)) or {}
+def read_primary_ohlc(paths: StockPaths, slug: str) -> dict[str, Any]:
+    data = _read_json(paths.primary_ohlc_json(slug)) or {}
     if not data:
         data = {
-            "ticker": ticker,
+            "instrument_id": None,
+            "primary_ticker": None,
             "source": "polygon.io",
             "price_currency": "USD",
             "fields": ["date", "open", "high", "low", "close", "volume", "vwap"],
@@ -113,9 +117,9 @@ def read_primary_ohlc(paths: StockPaths, ticker: str) -> dict[str, Any]:
     return data
 
 
-def write_primary_ohlc(paths: StockPaths, ticker: str, ohlc: dict[str, Any]) -> None:
+def write_primary_ohlc(paths: StockPaths, slug: str, ohlc: dict[str, Any]) -> None:
     ohlc["generated_at"] = utcnow_iso()
-    _write_json(paths.primary_ohlc_json(ticker), ohlc)
+    _write_json(paths.primary_ohlc_json(slug), ohlc)
 
 
 def append_ohlc_rows(existing: dict[str, Any], new_rows: list[dict[str, Any]]) -> dict[str, Any]:
