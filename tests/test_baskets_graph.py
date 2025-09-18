@@ -23,12 +23,15 @@ def test_baskets_metrics_and_outputs(tmp_path: Path):
     compiled = build_basket_graph()
     state = {
         "settings": settings,
-        "basket": {"id": "growth_tech", "label": "Growth Tech", "slug": "growth-tech", "tickers": ["AAPL", "NVDA"]},
+        "basket": {
+            "id": "growth_tech",
+            "label": "Growth Tech",
+            "slug": "growth-tech",
+            "tickers": ["AAPL", "NVDA"],
+        },
     }
     out = compiled.invoke(state)
     rep = out.get("basket_report")
     assert rep and rep["slug"] == "growth-tech"
     assert Path(rep["metrics_path"]).exists()
     assert Path(rep["report_path"]).exists()
-
-

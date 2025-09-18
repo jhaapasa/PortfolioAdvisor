@@ -22,6 +22,7 @@ def compute_trailing_returns(ohlc: dict[str, Any]) -> dict[str, Any]:
         "primary_ticker": ohlc.get("primary_ticker"),
         "as_of": ohlc.get("coverage", {}).get("end_date"),
         "windows": {
+            "d1": trailing(1),
             "d5": trailing(5),
             "d21": trailing(21),
             "d252": trailing(252),

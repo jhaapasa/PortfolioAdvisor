@@ -94,7 +94,7 @@ cd /Users/jhaapasa/repos/PortfolioAdvisor && \
   git fetch origin --prune && \
   GIT_SEQUENCE_EDITOR=true git rebase -i --rebase-merges --autosquash origin/main
 ```
-2) Ensure linters/tests pass; make final tidy commits as needed.
+2) Ensure linters/format/tests pass; make final tidy commits as needed.
 3) Push with `--force-with-lease`.
 ```bash
 cd /Users/jhaapasa/repos/PortfolioAdvisor && \

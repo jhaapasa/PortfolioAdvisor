@@ -53,7 +53,13 @@ def test_update_ticker_pipeline_writes_all_artifacts(tmp_path, monkeypatch):
     settings = Settings(input_dir=str(inp_dir), output_dir=str(out_dir), verbose=True)
 
     # Act
-    update_instrument(settings, instrument={"instrument_id": "cid:stocks:us:composite:TEST", "primary_ticker": "TEST"})
+    update_instrument(
+        settings,
+        instrument={
+            "instrument_id": "cid:stocks:us:composite:TEST",
+            "primary_ticker": "TEST",
+        },
+    )
 
     # Assert: all expected artifacts exist and have reasonable content
     base = Path(out_dir) / "stocks" / "tickers" / "cid-stocks-us-composite-test"
@@ -68,7 +74,7 @@ def test_update_ticker_pipeline_writes_all_artifacts(tmp_path, monkeypatch):
 
     with primary.open("r", encoding="utf-8") as fh:
         p = json.load(fh)
-    assert p["ticker"] == "TEST"
+    assert p["primary_ticker"] == "TEST"
     assert len(p["data"]) == 2
     assert p["coverage"]["end_date"] == "2025-01-03"
 

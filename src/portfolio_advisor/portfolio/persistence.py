@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
 # Reuse atomic write and helper patterns from stocks/db.py within the package
 from ..stocks.db import _write_json, utcnow_iso  # noqa: PLC2701 (private import within package)
 
@@ -121,9 +120,7 @@ def _derive_baskets(holdings: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         slug = _slugify(label)
         bid = _basket_id_from_slug(slug)
-        b = buckets.setdefault(
-            slug, {"id": bid, "label": label, "slug": slug, "size": 0}
-        )
+        b = buckets.setdefault(slug, {"id": bid, "label": label, "slug": slug, "size": 0})
         b["size"] += 1
     # Add last_updated placeholder
     now = utcnow_iso()
@@ -292,5 +289,3 @@ def _simple_lock(lock_path: Path):  # pragma: no cover - straightforward
     finally:
         with contextlib.suppress(Exception):
             os.rmdir(lock_path)
-
-

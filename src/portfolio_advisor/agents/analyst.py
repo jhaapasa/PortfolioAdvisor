@@ -67,8 +67,8 @@ def analyst_node(state: dict) -> dict:
             av = rep.get("averages") or {}
             d1 = av.get("d1")
             d5 = av.get("d5")
-            d1s = f"{d1:+.2%}" if isinstance(d1, (int, float)) and d1 is not None else "n/a"
-            d5s = f"{d5:+.2%}" if isinstance(d5, (int, float)) and d5 is not None else "n/a"
+            d1s = f"{d1:+.2%}" if isinstance(d1, int | float) else "n/a"
+            d5s = f"{d5:+.2%}" if isinstance(d5, int | float) else "n/a"
             text = rep.get("summary_text") or ""
             highlights_lines.append(f"{label} ({slug}) — avg d1 {d1s}, d5 {d5s}\n{text}")
         except Exception:  # pragma: no cover - defensive

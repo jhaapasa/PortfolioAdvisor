@@ -5,7 +5,7 @@ from portfolio_advisor.stocks.db import append_ohlc_rows
 
 def test_append_ohlc_rows_merges_and_updates_coverage():
     existing = {
-        "ticker": "AAPL",
+        "primary_ticker": "AAPL",
         "data": [
             {"date": "2024-12-30", "open": 10, "high": 11, "low": 9, "close": 10, "volume": 1},
             {"date": "2024-12-31", "open": 11, "high": 12, "low": 10, "close": 11, "volume": 2},

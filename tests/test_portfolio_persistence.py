@@ -57,8 +57,6 @@ def test_persistence_writes_and_diffs(tmp_path: Path):
     log_path = append_history_diffs(str(pdir), old_holdings, new_holdings, as_of="2025-09-15")
     logp = Path(log_path)
     assert logp.exists()
-    lines = [l for l in logp.read_text(encoding="utf-8").splitlines() if l.strip()]
-    ops = [json.loads(l)["op"] for l in lines]
+    lines = [line for line in logp.read_text(encoding="utf-8").splitlines() if line.strip()]
+    ops = [json.loads(line)["op"] for line in lines]
     assert set(ops) == {"add", "update", "remove"}
-
-

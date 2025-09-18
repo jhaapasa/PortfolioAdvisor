@@ -86,6 +86,7 @@ def _collect_inputs_node(state: BasketState) -> dict:
                         ohlc = _json.load(fh)
                     closes = [float(r.get("close", 0.0)) for r in ohlc.get("data", [])]
                     as_of = as_of or (ohlc.get("coverage") or {}).get("end_date")
+
                     def trailing(n: int) -> float | None:
                         if len(closes) <= n:
                             return None
@@ -94,6 +95,7 @@ def _collect_inputs_node(state: BasketState) -> dict:
                         if c0 == 0:
                             return None
                         return (ct / c0) - 1.0
+
                     if d1 is None:
                         d1 = trailing(1)
                     if d5 is None:
@@ -111,6 +113,7 @@ def _compute_metrics_node(state: BasketState) -> dict:
     collected = state.get("_collected", {})
     rows: list[dict[str, Any]] = collected.get("rows", [])
     as_of = collected.get("as_of")
+
     # Compute equal-weight averages ignoring None values
     def _avg(key: str) -> float | None:
         vals = [float(r[key]) for r in rows if r.get(key) is not None]
@@ -128,7 +131,11 @@ def _compute_metrics_node(state: BasketState) -> dict:
         return [r["instrument_id"] for r in present[:3]]
 
     metrics = {
-        "basket": {"id": basket.get("id"), "label": basket.get("label"), "slug": basket.get("slug")},
+        "basket": {
+            "id": basket.get("id"),
+            "label": basket.get("label"),
+            "slug": basket.get("slug"),
+        },
         "as_of": as_of,
         "instruments": rows,
         "averages": {"d1": d1_avg, "d5": d5_avg},
@@ -201,5 +208,3 @@ def _utcnow_iso() -> str:
     from datetime import UTC, datetime
 
     return datetime.now(UTC).isoformat()
-
-

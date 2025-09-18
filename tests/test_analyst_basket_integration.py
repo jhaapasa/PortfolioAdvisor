@@ -35,5 +35,3 @@ def test_analyst_includes_basket_highlights(monkeypatch):
     content = out.get("analysis", "")
     assert "Basket Highlights" in content
     assert "Growth Tech" in content
-
-

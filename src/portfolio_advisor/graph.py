@@ -8,6 +8,7 @@ run exactly once after their respective fan-out stages complete.
 from __future__ import annotations
 
 import operator
+from pathlib import Path
 from typing import Annotated, Any, TypedDict
 
 from langgraph.graph import END, StateGraph
@@ -21,6 +22,7 @@ from .agents.resolver import resolve_one_node
 from .graphs.baskets import build_basket_graph
 from .graphs.stocks import update_all_for_instruments
 from .portfolio.persistence import (
+    PortfolioPaths,
     append_history_diffs,
     write_baskets_views,
     write_current_holdings,
@@ -80,14 +82,13 @@ def build_graph() -> Any:
     graph.add_node("dispatch_resolve", _noop)
     graph.add_node("resolve_one", resolve_one_node)
     graph.add_node("join_after_resolve", _join_after_parse, defer=True)
+
     def _commit_portfolio_node(state: GraphState) -> dict:
         settings = state["settings"]
         holdings = state.get("resolved_holdings", []) or []
         if not holdings:
             return {"portfolio_persisted": False}
         # Read previous snapshot if exists
-        from pathlib import Path
-        from .portfolio.persistence import PortfolioPaths
 
         p = PortfolioPaths(root=Path(getattr(settings, "portfolio_dir")))
         prev = []
@@ -111,10 +112,12 @@ def build_graph() -> Any:
             if not iid or iid in seen_iids:
                 continue
             seen_iids.add(iid)
-            instruments.append({
-                "instrument_id": iid,
-                "primary_ticker": h.get("primary_ticker"),
-            })
+            instruments.append(
+                {
+                    "instrument_id": iid,
+                    "primary_ticker": h.get("primary_ticker"),
+                }
+            )
         # Load baskets index
         import json as _json
 
@@ -127,6 +130,7 @@ def build_graph() -> Any:
                 for b in idx:
                     label = b.get("label")
                     slug = b.get("slug")
+
                     # instruments belonging to this basket
                     def _slugify_local(text: str) -> str:
                         s = (text or "").lower()
@@ -154,16 +158,20 @@ def build_graph() -> Any:
                         if not iid or iid in seen:
                             continue
                         seen.add(iid)
-                        binstruments.append({
-                            "instrument_id": iid,
-                            "primary_ticker": h.get("primary_ticker"),
-                        })
-                    baskets.append({
-                        "id": b.get("id"),
-                        "label": label,
-                        "slug": slug,
-                        "instruments": binstruments,
-                    })
+                        binstruments.append(
+                            {
+                                "instrument_id": iid,
+                                "primary_ticker": h.get("primary_ticker"),
+                            }
+                        )
+                    baskets.append(
+                        {
+                            "id": b.get("id"),
+                            "label": label,
+                            "slug": slug,
+                            "instruments": binstruments,
+                        }
+                    )
             except Exception:
                 baskets = []
 

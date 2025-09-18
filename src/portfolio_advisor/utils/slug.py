@@ -34,5 +34,3 @@ def instrument_id_to_slug(instrument_id: str) -> str:
     Example: 'cid:stocks:us:XNAS:AAPL' -> 'cid-stocks-us-xnas-aapl'
     """
     return slugify(instrument_id)
-
-

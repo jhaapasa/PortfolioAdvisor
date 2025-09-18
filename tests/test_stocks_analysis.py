@@ -25,13 +25,14 @@ def make_ohlc(closes: list[float], start: str = "2024-12-01") -> dict:
             }
         )
         cur = cur + timedelta(days=1)
-    return {"ticker": "TEST", "data": rows, "coverage": {"end_date": rows[-1]["date"]}}
+    return {"primary_ticker": "TEST", "data": rows, "coverage": {"end_date": rows[-1]["date"]}}
 
 
 def test_trailing_returns_windows():
     closes = [100, 101, 102, 103, 104, 105]
     ohlc = make_ohlc(closes)
     r = compute_trailing_returns(ohlc)
+    assert r["windows"]["d1"] == (105 / 104) - 1
     assert r["windows"]["d5"] == (105 / 100) - 1
     assert r["windows"]["d21"] is None
 

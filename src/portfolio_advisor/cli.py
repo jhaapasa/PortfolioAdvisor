@@ -14,7 +14,10 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="PortfolioAdvisor CLI")
     p.add_argument("--input-dir", required=True, help="Path to input directory")
     p.add_argument("--output-dir", required=True, help="Path to output directory")
-    p.add_argument("--portfolio-dir", help="Optional portfolio state directory (defaults to <output_dir>/portfolio)")
+    p.add_argument(
+        "--portfolio-dir",
+        help=("Optional portfolio state directory " "(defaults to <output_dir>/portfolio)"),
+    )
 
     # Mode selection
     p.add_argument(
@@ -91,7 +94,10 @@ def main(argv: list[str] | None = None) -> int:
             verbose=bool(settings.verbose),
             agent_progress=bool(settings.agent_progress),
         )
-        instrument = {"instrument_id": instrument_id or f"cid:stocks:us:composite:{ticker}", "primary_ticker": ticker}
+        instrument = {
+            "instrument_id": instrument_id or f"cid:stocks:us:composite:{ticker}",
+            "primary_ticker": ticker,
+        }
         update_instrument(settings, instrument)
     except Exception as exc:  # pragma: no cover - network/provider specific
         print(f"Error: {exc}", file=sys.stderr)
