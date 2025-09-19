@@ -9,7 +9,12 @@ These repository-wide rules are always included. If a rule conflicts with file-s
 ## Priorities
 - Favor clarity, correctness, and maintainability.
 - Make incremental, self-contained edits; avoid large refactors unless requested.
-- Do not introduce build, type, or linter errors.
+- Do not introduce build, type, formatting or linter errors.
+
+## Design Principles
+- Be opinionated when it leads to simpler designs.
+- We are in early development - move fast. It's ok to break backwards compatibility for now.
+- Avoid introducing parameters and options if possible, and prefer simple designs that do the main thing well
 
 ## Communication
 - Be concise and skimmable; use short sections and bullet points.
@@ -55,7 +60,7 @@ These repository-wide rules are always included. If a rule conflicts with file-s
 
 ## Architecture (Customize)
 - Respect module boundaries and layering.
-- Keep public interfaces small and stable.
+- Keep public interfaces small.
 - Document new interfaces or protocols briefly.
 
 ## Documentation

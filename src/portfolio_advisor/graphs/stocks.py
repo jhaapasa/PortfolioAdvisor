@@ -7,6 +7,7 @@ from typing import Any, TypedDict
 from langgraph.graph import END, StateGraph
 
 from ..config import Settings
+from ..models.canonical import InstrumentKey
 from ..services.polygon_client import PolygonClient
 from ..stocks.analysis import (
     compute_sma_series,
@@ -34,7 +35,19 @@ class StockState(TypedDict, total=False):
 
 
 def _resolve_ticker_node(state: StockState) -> dict:
-    # Identity already canonical in instrument_id; nothing to do.
+    # Ensure primary_ticker is set; derive from instrument_id when missing
+    instrument = state["instrument"]
+    ticker = instrument.get("primary_ticker")
+    if not ticker:
+        iid = str(instrument.get("instrument_id") or "")
+        try:
+            symbol = InstrumentKey.parse(iid).symbol
+        except Exception:
+            symbol = None
+        if symbol:
+            updated = dict(instrument)
+            updated["primary_ticker"] = symbol
+            return {"instrument": updated}
     return {}
 
 
@@ -69,7 +82,13 @@ def _fetch_primary_node(state: StockState) -> dict:
     settings: Settings = state["settings"]
     instrument = state["instrument"]
     iid = str(instrument.get("instrument_id"))
-    ticker = str(instrument.get("primary_ticker"))
+    ticker_val = instrument.get("primary_ticker")
+    if not ticker_val:
+        try:
+            ticker_val = InstrumentKey.parse(iid).symbol
+        except Exception:
+            ticker_val = ""
+    ticker = str(ticker_val)
     slug = instrument_id_to_slug(iid)
     paths = StockPaths(root=(Path(settings.output_dir) / "stocks"))
 
@@ -147,7 +166,6 @@ def _commit_metadata_node(state: StockState) -> dict:
     settings: Settings = state["settings"]
     instrument = state["instrument"]
     iid = str(instrument.get("instrument_id"))
-    ticker = str(instrument.get("primary_ticker"))
     slug = instrument_id_to_slug(iid)
     paths = StockPaths(root=(Path(settings.output_dir) / "stocks"))
     meta = read_meta(paths, slug)
@@ -157,7 +175,15 @@ def _commit_metadata_node(state: StockState) -> dict:
     if end_date:
         meta["last_complete_trading_day"] = end_date
     meta["instrument_id"] = iid
-    meta["primary_ticker"] = ticker
+    # Prefer ticker recorded in OHLC; fallback to instrument and then parse from instrument_id
+    ticker_val = ohlc.get("primary_ticker") or instrument.get("primary_ticker")
+    if not ticker_val:
+        try:
+            ticker_val = InstrumentKey.parse(iid).symbol
+        except Exception:
+            ticker_val = None
+    if ticker_val is not None:
+        meta["primary_ticker"] = str(ticker_val)
     meta["slug"] = slug
     meta.setdefault("artifacts", {})
     for art in (

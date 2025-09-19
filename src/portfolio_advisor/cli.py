@@ -8,6 +8,7 @@ from .analyze import analyze_portfolio
 from .config import Settings
 from .graphs.stocks import update_instrument
 from .logging_config import configure_logging
+from .models.canonical import InstrumentKey
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -94,9 +95,17 @@ def main(argv: list[str] | None = None) -> int:
             verbose=bool(settings.verbose),
             agent_progress=bool(settings.agent_progress),
         )
+        # Build instrument with a safe primary_ticker fallback from instrument_id when missing
+        iid = instrument_id or (f"cid:stocks:us:composite:{ticker}" if ticker else None)
+        symbol = None
+        if iid and not ticker:
+            try:
+                symbol = InstrumentKey.parse(iid).symbol
+            except Exception:
+                symbol = None
         instrument = {
-            "instrument_id": instrument_id or f"cid:stocks:us:composite:{ticker}",
-            "primary_ticker": ticker,
+            "instrument_id": iid,
+            "primary_ticker": ticker or symbol,
         }
         update_instrument(settings, instrument)
     except Exception as exc:  # pragma: no cover - network/provider specific
