@@ -8,7 +8,8 @@ from pathlib import Path
 from typing import Any
 
 # Reuse atomic write and helper patterns from stocks/db.py within the package
-from ..stocks.db import _write_json, utcnow_iso  # noqa: PLC2701 (private import within package)
+from ..utils.fs import utcnow_iso, write_json_atomic
+from ..utils.slug import slugify
 
 
 @dataclass
@@ -60,22 +61,7 @@ def _ensure_dirs(paths: PortfolioPaths) -> None:
 
 
 def _slugify(label: str) -> str:
-    s = (label or "").lower()
-    out = []
-    prev_dash = False
-    for ch in s:
-        if ch.isalnum():
-            out.append(ch)
-            prev_dash = False
-        else:
-            if not prev_dash:
-                out.append("-")
-            prev_dash = True
-    slug = "".join(out).strip("-")
-    # collapse multiple dashes
-    while "--" in slug:
-        slug = slug.replace("--", "-")
-    return slug or "none"
+    return slugify(label)
 
 
 def _basket_id_from_slug(slug: str) -> str:
@@ -107,7 +93,7 @@ def write_current_holdings(portfolio_dir: str, holdings: list[dict[str, Any]]) -
     # Use stable subset and sort by instrument_id
     subset = [_stable_holding_view(h) for h in holdings]
     subset.sort(key=lambda x: str(x.get("instrument_id") or ""))
-    _write_json(paths.holdings_json(), subset)
+    write_json_atomic(paths.holdings_json(), subset)
     return str(paths.holdings_json())
 
 
@@ -146,7 +132,7 @@ def write_portfolio_header(portfolio_dir: str, holdings: list[dict[str, Any]]) -
         "num_baskets": len(baskets),
         "baskets": baskets,
     }
-    _write_json(paths.portfolio_json(), header)
+    write_json_atomic(paths.portfolio_json(), header)
     return str(paths.portfolio_json())
 
 
@@ -154,7 +140,7 @@ def write_baskets_views(portfolio_dir: str, holdings: list[dict[str, Any]]) -> l
     paths = PortfolioPaths(root=Path(portfolio_dir))
     _ensure_dirs(paths)
     baskets = _derive_baskets(holdings)
-    _write_json(paths.baskets_index_json(), baskets)
+    write_json_atomic(paths.baskets_index_json(), baskets)
     written: list[str] = [str(paths.baskets_index_json())]
     # Write positions per basket
     for b in baskets:
@@ -166,11 +152,11 @@ def write_baskets_views(portfolio_dir: str, holdings: list[dict[str, Any]]) -> l
             if _slugify(str(h.get("basket") or "")) == slug
         ]
         positions.sort(key=lambda x: str(x.get("instrument_id") or ""))
-        _write_json(paths.basket_positions_json(slug), positions)
+        write_json_atomic(paths.basket_positions_json(slug), positions)
         # Write basket meta if not present
         if not paths.basket_meta_json(slug).exists():
             meta = {"id": b["id"], "label": b["label"], "slug": slug}
-            _write_json(paths.basket_meta_json(slug), meta)
+            write_json_atomic(paths.basket_meta_json(slug), meta)
         written.append(str(paths.basket_positions_json(slug)))
     return written
 

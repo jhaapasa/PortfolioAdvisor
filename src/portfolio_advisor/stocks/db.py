@@ -1,34 +1,12 @@
 from __future__ import annotations
 
-import contextlib
 import datetime as dt
 import json
-import os
-from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-
-# Minimal single-process file lock using directory creation. This avoids new deps.
-@contextlib.contextmanager
-def file_lock(lock_path: Path, timeout_s: int = 10) -> Iterator[None]:  # pragma: no cover - simple
-    import time
-
-    deadline = time.time() + timeout_s
-    while True:
-        try:
-            os.mkdir(lock_path)
-            break
-        except FileExistsError:
-            if time.time() > deadline:
-                raise TimeoutError(f"Timed out acquiring lock: {lock_path}")
-            time.sleep(0.05)
-    try:
-        yield
-    finally:
-        with contextlib.suppress(Exception):
-            os.rmdir(lock_path)
+from ..utils.fs import utcnow_iso, write_json_atomic
 
 
 @dataclass
@@ -72,15 +50,10 @@ def _read_json(path: Path) -> dict[str, Any] | list[dict[str, Any]]:
 
 
 def _write_json(path: Path, data: Any) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as fh:
-        json.dump(data, fh, ensure_ascii=False, indent=2)
-    os.replace(tmp, path)
+    write_json_atomic(path, data)
 
 
-def utcnow_iso() -> str:
-    return dt.datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+# use shared utcnow_iso from utils.fs
 
 
 def read_meta(paths: StockPaths, slug: str) -> dict[str, Any]:
