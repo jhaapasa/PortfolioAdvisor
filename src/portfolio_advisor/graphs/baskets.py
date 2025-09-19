@@ -6,6 +6,7 @@ from typing import Any, TypedDict
 from langgraph.graph import END, StateGraph
 
 from ..config import Settings
+from ..utils.fs import utcnow_iso
 from ..utils.slug import instrument_id_to_slug
 
 
@@ -174,7 +175,7 @@ def _write_outputs_node(state: BasketState) -> dict:
 
     metrics_path = out_dir / "metrics.json"
     with metrics_path.open("w", encoding="utf-8") as fh:
-        json.dump({**m, "generated_at": _utcnow_iso()}, fh, ensure_ascii=False, indent=2)
+        json.dump({**m, "generated_at": utcnow_iso()}, fh, ensure_ascii=False, indent=2)
     report_path = out_dir / "report.md"
     report_path.write_text(state.get("report_md") or "", encoding="utf-8")
     return {
@@ -205,6 +206,5 @@ def build_basket_graph():
 
 
 def _utcnow_iso() -> str:
-    from datetime import UTC, datetime
-
-    return datetime.now(UTC).isoformat()
+    # Deprecated: use utils.fs.utcnow_iso
+    return utcnow_iso()

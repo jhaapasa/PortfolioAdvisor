@@ -38,14 +38,12 @@ def compute_volatility_annualized(ohlc: dict[str, Any], window: int = 21) -> dic
     if len(closes) < window + 1:
         vol = None
     else:
-        import math as _math
-
         returns = []
         for i in range(1, len(closes)):
             prev = closes[i - 1]
             curr = closes[i]
             if prev > 0 and curr > 0:
-                returns.append(_math.log(curr / prev))
+                returns.append(math.log(curr / prev))
         if len(returns) >= window:
             tail = returns[-window:]
             mean = sum(tail) / len(tail)

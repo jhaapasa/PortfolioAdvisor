@@ -28,6 +28,7 @@ from .portfolio.persistence import (
     write_current_holdings,
     write_portfolio_header,
 )
+from .utils.slug import slugify
 
 
 class GraphState(TypedDict, total=False):
@@ -132,27 +133,10 @@ def build_graph() -> Any:
                     slug = b.get("slug")
 
                     # instruments belonging to this basket
-                    def _slugify_local(text: str) -> str:
-                        s = (text or "").lower()
-                        out = []
-                        prev_dash = False
-                        for ch in s:
-                            if ch.isalnum():
-                                out.append(ch)
-                                prev_dash = False
-                            else:
-                                if not prev_dash:
-                                    out.append("-")
-                                prev_dash = True
-                        joined = "".join(out).strip("-")
-                        while "--" in joined:
-                            joined = joined.replace("--", "-")
-                        return joined or "none"
-
                     binstruments = []
                     seen: set[str] = set()
                     for h in holdings:
-                        if _slugify_local(str(h.get("basket") or "")) != slug:
+                        if slugify(str(h.get("basket") or "")) != slug:
                             continue
                         iid = str(h.get("instrument_id") or "")
                         if not iid or iid in seen:
