@@ -4,8 +4,9 @@ import contextlib
 import datetime as dt
 import json
 import os
+from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 
 def write_json_atomic(path: Path, data: Any) -> None:
