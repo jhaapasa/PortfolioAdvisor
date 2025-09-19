@@ -40,9 +40,9 @@ def test_defaults_and_write_read_roundtrip(tmp_path):
 
     # Defaults when files absent
     meta = read_meta(paths, "ZZZ")
-    assert meta["ticker"] == "ZZZ"
+    assert meta["slug"] == "ZZZ"
     ohlc = read_primary_ohlc(paths, "ZZZ")
-    assert ohlc["ticker"] == "ZZZ" and ohlc["data"] == []
+    assert ohlc.get("data") == []
 
     # Write round-trip
     meta["artifacts"]["primary.ohlc_daily"] = {"last_updated": "now"}

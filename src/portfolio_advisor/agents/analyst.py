@@ -20,6 +20,7 @@ ANALYST_PROMPT_TEMPLATE = (
     "Files: {files}\n"
     "Plan steps: {plan_steps}\n"
     "Resolver: {resolver_summary}\n\n"
+    "Basket Highlights:\n{basket_highlights}\n\n"
     "Holdings (JSON lines):\n{candidates}"
 )
 
@@ -56,10 +57,29 @@ def analyst_node(state: dict) -> dict:
         if (resolved or unresolved)
         else "no resolver data"
     )
+    # Basket summaries (if present)
+    basket_reports = state.get("basket_reports", []) or []
+    highlights_lines: list[str] = []
+    for rep in basket_reports[:10]:
+        try:
+            label = rep.get("label")
+            slug = rep.get("slug")
+            av = rep.get("averages") or {}
+            d1 = av.get("d1")
+            d5 = av.get("d5")
+            d1s = f"{d1:+.2%}" if isinstance(d1, int | float) else "n/a"
+            d5s = f"{d5:+.2%}" if isinstance(d5, int | float) else "n/a"
+            text = rep.get("summary_text") or ""
+            highlights_lines.append(f"{label} ({slug}) — avg d1 {d1s}, d5 {d5s}\n{text}")
+        except Exception:  # pragma: no cover - defensive
+            continue
+    basket_highlights = "\n\n".join(highlights_lines) if highlights_lines else "[none]"
+
     prompt = ANALYST_PROMPT_TEMPLATE.format(
         files=", ".join(file_descriptions) if file_descriptions else "none",
         plan_steps=", ".join(plan.get("steps", [])),
         resolver_summary=resolver_summary,
+        basket_highlights=basket_highlights,
         candidates=cand_lines,
     )
 
