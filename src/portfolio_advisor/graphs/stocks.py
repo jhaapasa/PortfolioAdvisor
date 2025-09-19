@@ -32,6 +32,8 @@ class StockState(TypedDict, total=False):
     instrument: dict
     requested_artifacts: list[str]
     updates_needed: list[str]
+    _slug: str
+    _paths: Any
 
 
 def _resolve_ticker_node(state: StockState) -> dict:
@@ -67,15 +69,20 @@ def _check_db_state_node(state: StockState) -> dict:
         "analysis.sma_20_50_100_200",
     ]
 
-    # Always allow primary update for now; optimization later
     updates: list[str] = []
-    if "primary.ohlc_daily" in requested:
+    # Decide if primary needs update by comparing last coverage end with today
+    ohlc = read_primary_ohlc(paths, slug)
+    coverage_end = (ohlc.get("coverage") or {}).get("end_date")
+    today_utc = dt.datetime.now(dt.UTC).date().isoformat()
+    if "primary.ohlc_daily" in requested and coverage_end != today_utc:
         updates.append("primary.ohlc_daily")
+    # Analysis artifacts depend on OHLC.
+    # Even if primary is unchanged, allow recompute when requested.
     for art in ("analysis.returns", "analysis.volatility", "analysis.sma_20_50_100_200"):
         if art in requested:
             updates.append(art)
 
-    return {"updates_needed": updates}
+    return {"updates_needed": updates, "_slug": slug, "_paths": paths}
 
 
 def _fetch_primary_node(state: StockState) -> dict:
@@ -89,8 +96,8 @@ def _fetch_primary_node(state: StockState) -> dict:
         except Exception:
             ticker_val = ""
     ticker = str(ticker_val)
-    slug = instrument_id_to_slug(iid)
-    paths = StockPaths(root=(Path(settings.output_dir) / "stocks"))
+    slug = state.get("_slug") or instrument_id_to_slug(iid)
+    paths = state.get("_paths") or StockPaths(root=(Path(settings.output_dir) / "stocks"))
 
     client = PolygonClient(
         api_key=settings.polygon_api_key,
@@ -105,9 +112,9 @@ def _fetch_primary_node(state: StockState) -> dict:
         # next day after end_date
         start = str(dt.datetime.strptime(start_date, "%Y-%m-%d").date() + dt.timedelta(days=1))
     else:
-        # default long ago to let Polygon decide
-        start = "1990-01-01"
-    today = dt.datetime.utcnow().date().isoformat()
+        # default to a reasonable backfill horizon (5y) to avoid huge first-run fetches
+        start = (dt.date.today() - dt.timedelta(days=5 * 365)).isoformat()
+    today = dt.datetime.now(dt.UTC).date().isoformat()
 
     new_rows = list(client.list_aggs_daily(ticker=ticker, from_date=start, to_date=today))
     if new_rows:
@@ -123,8 +130,8 @@ def _fetch_primary_node(state: StockState) -> dict:
 def _compute_returns_node(state: StockState) -> dict:
     settings: Settings = state["settings"]
     instrument = state["instrument"]
-    slug = instrument_id_to_slug(str(instrument.get("instrument_id")))
-    paths = StockPaths(root=(Path(settings.output_dir) / "stocks"))
+    slug = state.get("_slug") or instrument_id_to_slug(str(instrument.get("instrument_id")))
+    paths = state.get("_paths") or StockPaths(root=(Path(settings.output_dir) / "stocks"))
     ohlc = read_primary_ohlc(paths, slug)
     returns = compute_trailing_returns(ohlc)
     from ..stocks.db import _write_json, utcnow_iso  # reuse private helper within package
@@ -137,8 +144,8 @@ def _compute_returns_node(state: StockState) -> dict:
 def _compute_volatility_node(state: StockState) -> dict:
     settings: Settings = state["settings"]
     instrument = state["instrument"]
-    slug = instrument_id_to_slug(str(instrument.get("instrument_id")))
-    paths = StockPaths(root=(Path(settings.output_dir) / "stocks"))
+    slug = state.get("_slug") or instrument_id_to_slug(str(instrument.get("instrument_id")))
+    paths = state.get("_paths") or StockPaths(root=(Path(settings.output_dir) / "stocks"))
     ohlc = read_primary_ohlc(paths, slug)
     vol = compute_volatility_annualized(ohlc, window=21)
     from ..stocks.db import _write_json, utcnow_iso
@@ -151,8 +158,8 @@ def _compute_volatility_node(state: StockState) -> dict:
 def _compute_sma_node(state: StockState) -> dict:
     settings: Settings = state["settings"]
     instrument = state["instrument"]
-    slug = instrument_id_to_slug(str(instrument.get("instrument_id")))
-    paths = StockPaths(root=(Path(settings.output_dir) / "stocks"))
+    slug = state.get("_slug") or instrument_id_to_slug(str(instrument.get("instrument_id")))
+    paths = state.get("_paths") or StockPaths(root=(Path(settings.output_dir) / "stocks"))
     ohlc = read_primary_ohlc(paths, slug)
     sma = compute_sma_series(ohlc)
     from ..stocks.db import _write_json, utcnow_iso
@@ -209,9 +216,15 @@ def build_stocks_graph() -> Any:
 
     graph.set_entry_point("resolve_ticker")
     graph.add_edge("resolve_ticker", "check_db_state")
-    # For simplicity, always run all nodes in sequence for now
-    graph.add_edge("check_db_state", "fetch_primary")
+
+    # Conditionally run primary fetch using conditional edges
+    def _route_after_check(state: StockState):
+        needs = state.get("updates_needed") or []
+        return "fetch_primary" if "primary.ohlc_daily" in needs else "compute_returns"
+
+    graph.add_conditional_edges("check_db_state", _route_after_check)
     graph.add_edge("fetch_primary", "compute_returns")
+    # Always compute analysis when requested
     graph.add_edge("compute_returns", "compute_volatility")
     graph.add_edge("compute_volatility", "compute_sma")
     graph.add_edge("compute_sma", "commit_metadata")
