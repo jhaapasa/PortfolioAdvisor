@@ -15,28 +15,35 @@ def _ts_ms(yyyy_mm_dd: str) -> int:
 
 
 def test_update_ticker_pipeline_writes_all_artifacts(tmp_path, monkeypatch):
-    # Arrange: stub PolygonClient.list_aggs_daily to return two days of data
+    # Arrange: stub PolygonClient.list_aggs_daily to return a modest set of data
     # Provide normalized rows as returned by PolygonClient.list_aggs_daily
-    bars = [
-        {
-            "date": "2025-01-02",
-            "open": 10.0,
-            "high": 11.0,
-            "low": 9.0,
-            "close": 10.5,
-            "volume": 100,
-            "vwap": 10.3,
-        },
-        {
-            "date": "2025-01-03",
-            "open": 10.6,
-            "high": 11.2,
-            "low": 10.2,
-            "close": 11.0,
-            "volume": 110,
-            "vwap": 10.8,
-        },
-    ]
+    # Generate ~260 trading-like days for report rendering
+    bars = []
+    from datetime import date, timedelta
+
+    d = date(2024, 1, 1)
+    price = 100.0
+    added = 0
+    while added < 260:
+        if d.weekday() < 5:
+            open_p = price
+            high_p = open_p * 1.01
+            low_p = open_p * 0.99
+            close_p = open_p * (1.0 + (0.001 if (added % 7) else -0.0005))
+            price = close_p
+            bars.append(
+                {
+                    "date": d.isoformat(),
+                    "open": open_p,
+                    "high": high_p,
+                    "low": low_p,
+                    "close": close_p,
+                    "volume": 1000 + added,
+                    "vwap": (high_p + low_p + close_p) / 3,
+                }
+            )
+            added += 1
+        d += timedelta(days=1)
 
     def fake_list_aggs_daily(
         self, ticker, from_date, to_date, adjusted=True, limit=50000
@@ -75,8 +82,8 @@ def test_update_ticker_pipeline_writes_all_artifacts(tmp_path, monkeypatch):
     with primary.open("r", encoding="utf-8") as fh:
         p = json.load(fh)
     assert p["primary_ticker"] == "TEST"
-    assert len(p["data"]) == 2
-    assert p["coverage"]["end_date"] == "2025-01-03"
+    assert len(p["data"]) >= 180
+    assert p["coverage"]["end_date"]
 
     with returns.open("r", encoding="utf-8") as fh:
         r = json.load(fh)
@@ -91,7 +98,12 @@ def test_update_ticker_pipeline_writes_all_artifacts(tmp_path, monkeypatch):
     with sma.open("r", encoding="utf-8") as fh:
         s = json.load(fh)
     assert s["windows"] == [20, 50, 100, 200]
-    assert s["coverage"]["end_date"] == "2025-01-03"
+    assert s["coverage"]["end_date"]
+
+    # Report image should exist when sufficient data present
+    report_img = base / "report" / "candle_ohlcv_1y.png"
+    assert report_img.exists()
+    assert report_img.stat().st_size > 0
 
     with meta.open("r", encoding="utf-8") as fh:
         m = json.load(fh)

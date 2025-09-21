@@ -25,6 +25,7 @@ from ..stocks.db import (
     write_meta,
     write_primary_ohlc,
 )
+from ..stocks.plotting import render_candlestick_ohlcv_1y
 from ..utils.slug import instrument_id_to_slug
 
 
@@ -234,6 +235,24 @@ def _compute_sma_node(state: StockState) -> dict:
     return {}
 
 
+def _render_report_node(state: StockState) -> dict:
+    settings: Settings = state["settings"]
+    instrument = state["instrument"]
+    slug = state.get("_slug") or instrument_id_to_slug(str(instrument.get("instrument_id")))
+    paths = state.get("_paths") or StockPaths(root=(Path(settings.output_dir) / "stocks"))
+    ohlc = read_primary_ohlc(paths, slug)
+
+    # Render 1Y candlestick into report folder
+    ticker_dir = paths.ticker_dir(slug)
+    try:
+        written = render_candlestick_ohlcv_1y(ticker_dir, ohlc)
+        if written is not None:
+            _logger.info("stocks.render_report: wrote %s", written)
+    except Exception:
+        _logger.warning("stocks.render_report: rendering failed", exc_info=True)
+    return {}
+
+
 def _commit_metadata_node(state: StockState) -> dict:
     settings: Settings = state["settings"]
     instrument = state["instrument"]
@@ -278,6 +297,7 @@ def build_stocks_graph() -> Any:
     graph.add_node("compute_volatility", _compute_volatility_node)
     graph.add_node("compute_sma", _compute_sma_node)
     graph.add_node("commit_metadata", _commit_metadata_node)
+    graph.add_node("render_report", _render_report_node)
 
     graph.set_entry_point("resolve_ticker")
     graph.add_edge("resolve_ticker", "check_db_state")
@@ -292,7 +312,8 @@ def build_stocks_graph() -> Any:
     # Always compute analysis when requested
     graph.add_edge("compute_returns", "compute_volatility")
     graph.add_edge("compute_volatility", "compute_sma")
-    graph.add_edge("compute_sma", "commit_metadata")
+    graph.add_edge("compute_sma", "render_report")
+    graph.add_edge("render_report", "commit_metadata")
     graph.add_edge("commit_metadata", END)
     return graph.compile()
 

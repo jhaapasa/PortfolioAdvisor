@@ -114,6 +114,14 @@ Module proposal: `src/portfolio_advisor/graphs/stocks.py` (separate from `graph.
 - `ComputeSmaNode`: computes 20/50/100/200 SMAs; writes `analysis/sma_20_50_100_200.json`
 - `CommitMetadataNode`: updates `meta.json` with `artifacts.*.last_updated` and `last_complete_trading_day`
 
+### Report images
+
+- Per-ticker `report/` directory contains rendered charts for Markdown embedding.
+- Currently generated:
+  - `report/candle_ohlcv_1y.png`: 1-year candlestick with volume (PNG, 1200×600, dpi=150).
+- Example embed in Markdown:
+  `![OHLCV 1Y](output/stocks/tickers/<slug>/report/candle_ohlcv_1y.png)`
+
 Entrypoints:
 - `update_ticker(ticker, requested_artifacts=all)`: ensures primary and requested analyses are fresh
 - `update_all_for_portfolio(tickers, requested_artifacts)`: batch orchestration from the main agent

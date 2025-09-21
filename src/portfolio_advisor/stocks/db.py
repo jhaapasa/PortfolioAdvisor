@@ -32,6 +32,12 @@ class StockPaths:
     def analysis_sma_json(self, ticker: str) -> Path:
         return self.ticker_dir(ticker) / "analysis" / "sma_20_50_100_200.json"
 
+    def report_dir(self, ticker: str) -> Path:
+        return self.ticker_dir(ticker) / "report"
+
+    def report_candle_1y_png(self, ticker: str) -> Path:
+        return self.report_dir(ticker) / "candle_ohlcv_1y.png"
+
     def lock_dir(self, ticker: str) -> Path:
         return self.ticker_dir(ticker) / ".lock"
 
@@ -40,6 +46,7 @@ def ensure_ticker_scaffold(paths: StockPaths, ticker: str) -> None:
     base = paths.ticker_dir(ticker)
     (base / "primary").mkdir(parents=True, exist_ok=True)
     (base / "analysis").mkdir(parents=True, exist_ok=True)
+    (base / "report").mkdir(parents=True, exist_ok=True)
 
 
 def _read_json(path: Path) -> dict[str, Any] | list[dict[str, Any]]:
