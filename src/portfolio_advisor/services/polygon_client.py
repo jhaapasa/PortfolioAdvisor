@@ -116,7 +116,9 @@ class PolygonClient:
                 try:
                     import datetime as _dt
 
-                    date_str = _dt.datetime.utcfromtimestamp(int(ts) / 1000).strftime("%Y-%m-%d")
+                    date_str = _dt.datetime.fromtimestamp(int(ts) / 1000, _dt.UTC).strftime(
+                        "%Y-%m-%d"
+                    )
                 except Exception:  # pragma: no cover - defensive
                     date_str = None
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import logging
 from pathlib import Path
 from typing import Any, TypedDict
 
@@ -34,6 +35,9 @@ class StockState(TypedDict, total=False):
     updates_needed: list[str]
     _slug: str
     _paths: Any
+
+
+_logger = logging.getLogger(__name__)
 
 
 def _resolve_ticker_node(state: StockState) -> dict:
@@ -73,8 +77,10 @@ def _check_db_state_node(state: StockState) -> dict:
     # Decide if primary needs update by comparing last coverage end with today
     ohlc = read_primary_ohlc(paths, slug)
     coverage_end = (ohlc.get("coverage") or {}).get("end_date")
+    has_rows = bool(ohlc.get("data") or [])
     today_utc = dt.datetime.now(dt.UTC).date().isoformat()
-    if "primary.ohlc_daily" in requested and coverage_end != today_utc:
+    # On fresh start (no rows), or if coverage is behind today, fetch primary
+    if "primary.ohlc_daily" in requested and (not has_rows or coverage_end != today_utc):
         updates.append("primary.ohlc_daily")
     # Analysis artifacts depend on OHLC.
     # Even if primary is unchanged, allow recompute when requested.
@@ -82,6 +88,13 @@ def _check_db_state_node(state: StockState) -> dict:
         if art in requested:
             updates.append(art)
 
+    _logger.info(
+        "stocks.check_db_state: slug=%s requested=%s coverage_end=%s updates=%s",
+        slug,
+        ",".join(requested),
+        coverage_end,
+        ",".join(updates),
+    )
     return {"updates_needed": updates, "_slug": slug, "_paths": paths}
 
 
@@ -116,6 +129,13 @@ def _fetch_primary_node(state: StockState) -> dict:
         start = (dt.date.today() - dt.timedelta(days=5 * 365)).isoformat()
     today = dt.datetime.now(dt.UTC).date().isoformat()
 
+    _logger.info(
+        "stocks.fetch_primary: slug=%s ticker=%s range=%s..%s",
+        slug,
+        ticker,
+        start,
+        today,
+    )
     new_rows = list(client.list_aggs_daily(ticker=ticker, from_date=start, to_date=today))
     if new_rows:
         merged = append_ohlc_rows(current, new_rows)
@@ -124,6 +144,12 @@ def _fetch_primary_node(state: StockState) -> dict:
     merged["instrument_id"] = iid
     merged["primary_ticker"] = ticker
     write_primary_ohlc(paths, slug, merged)
+    _logger.info(
+        "stocks.fetch_primary: slug=%s wrote ohlc rows=%d coverage_end=%s",
+        slug,
+        len(merged.get("data", [])),
+        (merged.get("coverage") or {}).get("end_date"),
+    )
     return {}
 
 
@@ -133,6 +159,19 @@ def _compute_returns_node(state: StockState) -> dict:
     slug = state.get("_slug") or instrument_id_to_slug(str(instrument.get("instrument_id")))
     paths = state.get("_paths") or StockPaths(root=(Path(settings.output_dir) / "stocks"))
     ohlc = read_primary_ohlc(paths, slug)
+    # Skip recompute if returns.json exists with matching as_of
+    as_of = (ohlc.get("coverage") or {}).get("end_date")
+    existing = paths.analysis_returns_json(slug)
+    if existing.exists():
+        try:
+            import json as _json
+
+            with existing.open("r", encoding="utf-8") as fh:
+                prev = _json.load(fh)
+            if prev.get("as_of") == as_of:
+                return {}
+        except Exception:
+            pass
     returns = compute_trailing_returns(ohlc)
     from ..stocks.db import _write_json, utcnow_iso  # reuse private helper within package
 
@@ -147,6 +186,19 @@ def _compute_volatility_node(state: StockState) -> dict:
     slug = state.get("_slug") or instrument_id_to_slug(str(instrument.get("instrument_id")))
     paths = state.get("_paths") or StockPaths(root=(Path(settings.output_dir) / "stocks"))
     ohlc = read_primary_ohlc(paths, slug)
+    # Skip recompute if volatility.json exists with matching as_of and window
+    as_of = (ohlc.get("coverage") or {}).get("end_date")
+    existing = paths.analysis_volatility_json(slug)
+    if existing.exists():
+        try:
+            import json as _json
+
+            with existing.open("r", encoding="utf-8") as fh:
+                prev = _json.load(fh)
+            if prev.get("as_of") == as_of and int(prev.get("window") or 21) == 21:
+                return {}
+        except Exception:
+            pass
     vol = compute_volatility_annualized(ohlc, window=21)
     from ..stocks.db import _write_json, utcnow_iso
 
@@ -161,6 +213,19 @@ def _compute_sma_node(state: StockState) -> dict:
     slug = state.get("_slug") or instrument_id_to_slug(str(instrument.get("instrument_id")))
     paths = state.get("_paths") or StockPaths(root=(Path(settings.output_dir) / "stocks"))
     ohlc = read_primary_ohlc(paths, slug)
+    # Skip recompute if sma json exists and coverage end matches
+    existing = paths.analysis_sma_json(slug)
+    if existing.exists():
+        try:
+            import json as _json
+
+            with existing.open("r", encoding="utf-8") as fh:
+                prev = _json.load(fh)
+            prev_cov = (prev.get("coverage") or {}).get("end_date")
+            if prev_cov == (ohlc.get("coverage") or {}).get("end_date"):
+                return {}
+        except Exception:
+            pass
     sma = compute_sma_series(ohlc)
     from ..stocks.db import _write_json, utcnow_iso
 
@@ -239,11 +304,27 @@ def update_instrument(
     state: StockState = {"settings": settings, "instrument": instrument}
     if requested_artifacts:
         state["requested_artifacts"] = requested_artifacts
-    compiled.invoke(state)
+    try:
+        compiled.invoke(state)
+    except Exception:
+        _logger.warning("stocks.update_instrument: invoke failed", exc_info=True)
 
 
 def update_all_for_instruments(
     settings: Settings, instruments: list[dict], requested_artifacts: list[str] | None = None
 ) -> None:
-    for inst in instruments:
-        update_instrument(settings, inst, requested_artifacts=requested_artifacts)
+    # Cap concurrency to a small number to reduce IO/API contention
+    import concurrent.futures as _futures
+
+    max_workers = 4
+    with _futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = [
+            executor.submit(update_instrument, settings, inst, requested_artifacts)
+            for inst in instruments
+        ]
+        for f in futures:
+            try:
+                f.result()
+            except Exception:
+                # Best-effort; errors are isolated per instrument, but log for visibility
+                _logger.warning("stocks.update_all: instrument update failed", exc_info=True)
