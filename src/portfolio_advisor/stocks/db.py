@@ -132,7 +132,7 @@ def compute_last_complete_trading_day(today_utc: dt.date | None = None) -> str:
     Always steps back at least one day from today, then rolls back through
     weekends so the result is Monday–Friday.
     """
-    d = today_utc or dt.datetime.utcnow().date()
+    d = today_utc or dt.datetime.now(dt.UTC).date()
     candidate = d - dt.timedelta(days=1)
     while candidate.weekday() >= 5:  # 5=Saturday, 6=Sunday
         candidate -= dt.timedelta(days=1)

@@ -43,7 +43,8 @@
         "stock",
         "--ticker",
         "AAPL",
-        "--verbose"
+        "--verbose",
+        "--agent-progress"
       ],
       "console": "integratedTerminal",
       "justMyCode": true

@@ -7,6 +7,7 @@ run exactly once after their respective fan-out stages complete.
 
 from __future__ import annotations
 
+import logging
 import operator
 from pathlib import Path
 from typing import Annotated, Any, TypedDict
@@ -30,6 +31,8 @@ from .portfolio.persistence import (
 )
 from .utils.slug import slugify
 
+logger = logging.getLogger(__name__)
+
 
 class GraphState(TypedDict, total=False):
     settings: Any
@@ -42,6 +45,8 @@ class GraphState(TypedDict, total=False):
     analysis: str
     portfolio_persisted: bool
     basket_reports: Annotated[list[dict], operator.add]
+    instruments: list[dict]
+    baskets: list[dict]
 
 
 def _dispatch_parse_tasks(state: GraphState):
@@ -87,8 +92,25 @@ def build_graph() -> Any:
     def _commit_portfolio_node(state: GraphState) -> dict:
         settings = state["settings"]
         holdings = state.get("resolved_holdings", []) or []
+        logger.info("graph.commit_portfolio: resolved_holdings=%d", len(holdings))
         if not holdings:
-            return {"portfolio_persisted": False}
+            # No resolved holdings; derive instruments from parsed holdings as a fallback
+            parsed = state.get("parsed_holdings", []) or []
+            instruments: list[dict] = []
+            seen_iids: set[str] = set()
+            for ph in parsed:
+                pt = str(ph.get("primary_ticker") or "").strip()
+                if not pt:
+                    continue
+                iid = f"cid:stocks:us:composite:{pt}"
+                if iid in seen_iids:
+                    continue
+                seen_iids.add(iid)
+                instruments.append({"instrument_id": iid, "primary_ticker": pt})
+            logger.info(
+                "graph.commit_portfolio: no holdings; derived instruments=%d", len(instruments)
+            )
+            return {"portfolio_persisted": False, "instruments": instruments, "baskets": []}
         # Read previous snapshot if exists
 
         p = PortfolioPaths(root=Path(getattr(settings, "portfolio_dir")))
@@ -119,6 +141,18 @@ def build_graph() -> Any:
                     "primary_ticker": h.get("primary_ticker"),
                 }
             )
+        # Fallback: if resolver produced no instruments, derive from parsed holdings tickers
+        if not instruments:
+            parsed = state.get("parsed_holdings", []) or []
+            for ph in parsed:
+                pt = str(ph.get("primary_ticker") or "").strip()
+                if not pt:
+                    continue
+                iid = f"cid:stocks:us:composite:{pt}"
+                if iid in seen_iids:
+                    continue
+                seen_iids.add(iid)
+                instruments.append({"instrument_id": iid, "primary_ticker": pt})
         # Load baskets index
         import json as _json
 
@@ -164,6 +198,9 @@ def build_graph() -> Any:
         as_of = max(dates) if dates else None
         append_history_diffs(getattr(settings, "portfolio_dir"), prev, holdings, as_of)
 
+        logger.info(
+            "graph.commit_portfolio: instruments=%d baskets=%d", len(instruments), len(baskets)
+        )
         return {
             "portfolio_persisted": True,
             "instruments": instruments,
@@ -175,6 +212,9 @@ def build_graph() -> Any:
     def _update_stocks_node(state: GraphState) -> dict:
         settings = state["settings"]
         instruments = state.get("instruments", []) or []
+        import logging as _logging
+
+        _logging.getLogger(__name__).info("graph.update_stocks: instruments=%d", len(instruments))
         try:
             update_all_for_instruments(settings, instruments)
         except Exception:
@@ -209,6 +249,7 @@ def build_graph() -> Any:
     graph.add_conditional_edges("dispatch_resolve", _dispatch_resolve_tasks)
     graph.add_edge("resolve_one", "join_after_resolve")
     graph.add_edge("join_after_resolve", "commit_portfolio")
+    # Always attempt stocks/baskets even if resolver produced none; the nodes are no-ops when empty
     graph.add_edge("commit_portfolio", "update_stocks")
     graph.add_edge("update_stocks", "run_baskets")
     graph.add_edge("run_baskets", "analyst")
