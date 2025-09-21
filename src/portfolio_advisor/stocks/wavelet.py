@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import math
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as np
 import pywt
@@ -97,10 +98,17 @@ def compute_modwt_logreturns(
         "pad_len": int(pad_len),
         "analysis_window_length": int(target_len),
     }
-    return WaveletTransformResult(details=details, scaling=scaling, dates=list(aligned_dates), meta=meta)
+    return WaveletTransformResult(
+        details=details,
+        scaling=scaling,
+        dates=list(aligned_dates),
+        meta=meta,
+    )
 
 
-def compute_variance_spectrum(result: WaveletTransformResult, baseline_returns: np.ndarray) -> dict[str, Any]:
+def compute_variance_spectrum(
+    result: WaveletTransformResult, baseline_returns: np.ndarray
+) -> dict[str, Any]:
     # baseline_returns should be aligned to result.dates
     def _var_pop(x: np.ndarray) -> float:
         if x.size == 0:
@@ -147,7 +155,9 @@ def to_coefficients_json(
     for i, arr in enumerate(result.details):
         key = f"D{i+1}"
         coeffs[key] = [{"date": d, "value": float(v)} for d, v in zip(result.dates, arr.tolist())]
-    coeffs["S5"] = [{"date": d, "value": float(v)} for d, v in zip(result.dates, result.scaling.tolist())]
+    coeffs["S5"] = [
+        {"date": d, "value": float(v)} for d, v in zip(result.dates, result.scaling.tolist())
+    ]
     return {
         "ticker": ticker,
         "metadata": result.meta,

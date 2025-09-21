@@ -42,6 +42,7 @@ def analyze_portfolio(
         fmt=settings.log_format,
         verbose=bool(settings.verbose),
         agent_progress=bool(settings.agent_progress),
+        log_libraries=bool(getattr(settings, "log_libraries", False)),
     )
 
     # Initialize global LangChain cache (SQLite) with optional read-bypass.

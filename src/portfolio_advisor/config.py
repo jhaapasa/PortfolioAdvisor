@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     log_format: str = Field(default="plain", alias="LOG_FORMAT")
     verbose: bool = Field(default=False, alias="VERBOSE")
     agent_progress: bool = Field(default=False, alias="AGENT_PROGRESS")
+    log_libraries: bool = Field(default=False, alias="LOG_LIBRARIES")
     # Caching
     skip_llm_cache: bool = Field(default=False, alias="SKIP_LLM_CACHE")
 

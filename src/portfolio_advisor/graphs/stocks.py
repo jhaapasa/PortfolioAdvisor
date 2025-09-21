@@ -15,13 +15,6 @@ from ..stocks.analysis import (
     compute_trailing_returns,
     compute_volatility_annualized,
 )
-from ..stocks.wavelet import (
-    compute_histograms,
-    compute_modwt_logreturns,
-    compute_variance_spectrum,
-    to_coefficients_json,
-    to_volatility_histogram_json,
-)
 from ..stocks.db import (
     StockPaths,
     append_ohlc_rows,
@@ -33,6 +26,13 @@ from ..stocks.db import (
     write_primary_ohlc,
 )
 from ..stocks.plotting import render_candlestick_ohlcv_1y
+from ..stocks.wavelet import (
+    compute_histograms,
+    compute_modwt_logreturns,
+    compute_variance_spectrum,
+    to_coefficients_json,
+    to_volatility_histogram_json,
+)
 from ..utils.slug import instrument_id_to_slug
 
 

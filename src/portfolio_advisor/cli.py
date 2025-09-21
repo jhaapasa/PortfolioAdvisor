@@ -61,6 +61,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show LangGraph agent progress messages",
     )
     p.add_argument(
+        "--log-libraries",
+        action="store_true",
+        help=(
+            "Allow library logs (httpx, urllib3, openai, langchain, langgraph) "
+            "at configured level"
+        ),
+    )
+    p.add_argument(
         "--skip-llm-cache",
         action="store_true",
         help="Force LLM calls to bypass cache lookup but write results to cache",
@@ -100,12 +108,13 @@ def main(argv: list[str] | None = None) -> int:
             fmt=settings.log_format,
             verbose=bool(settings.verbose),
             agent_progress=bool(settings.agent_progress),
+            log_libraries=bool(getattr(settings, "log_libraries", False)),
         )
         # Prefer existing instrument_id/slug if a ticker dir already exists for this symbol
         iid = instrument_id
         if not iid and ticker:
             try:
-                from .stocks.db import StockPaths, read_meta
+                from .stocks.db import StockPaths
 
                 paths = StockPaths(root=(Path(settings.output_dir) / "stocks"))
                 tickers_root = paths.root / "tickers"

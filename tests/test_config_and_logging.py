@@ -32,3 +32,29 @@ def test_configure_logging_plain_and_json(caplog):
     configure_logging(level="INFO", fmt="json")
     logging.getLogger("portfolio_advisor.test").info("world")
     assert any("world" in rec.message for rec in caplog.records)
+
+
+def test_configure_logging_library_mute_and_enable(caplog):
+    caplog.set_level(logging.INFO)
+    # By default, libraries should be muted (httpx in this case)
+    configure_logging(level="INFO", fmt="plain", log_libraries=False)
+    logging.getLogger("httpx").info("lib-muted")
+    assert not any("lib-muted" in rec.message for rec in caplog.records)
+    logging.getLogger("matplotlib").info("mpl-muted")
+    assert not any("mpl-muted" in rec.message for rec in caplog.records)
+
+    caplog.clear()
+    # When enabled, they should pass through
+    configure_logging(level="INFO", fmt="plain", log_libraries=True)
+    logging.getLogger("httpx").info("lib-allowed")
+    assert any("lib-allowed" in rec.message for rec in caplog.records)
+    logging.getLogger("matplotlib").info("mpl-allowed")
+    assert any("mpl-allowed" in rec.message for rec in caplog.records)
+
+    caplog.clear()
+    # Even when muted, warnings/errors should still appear
+    configure_logging(level="INFO", fmt="plain", log_libraries=False)
+    logging.getLogger("httpx").warning("lib-warning")
+    assert any("lib-warning" in rec.message for rec in caplog.records)
+    logging.getLogger("matplotlib").warning("mpl-warning")
+    assert any("mpl-warning" in rec.message for rec in caplog.records)
