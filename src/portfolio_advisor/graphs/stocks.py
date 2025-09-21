@@ -15,6 +15,13 @@ from ..stocks.analysis import (
     compute_trailing_returns,
     compute_volatility_annualized,
 )
+from ..stocks.wavelet import (
+    compute_histograms,
+    compute_modwt_logreturns,
+    compute_variance_spectrum,
+    to_coefficients_json,
+    to_volatility_histogram_json,
+)
 from ..stocks.db import (
     StockPaths,
     append_ohlc_rows,
@@ -88,6 +95,12 @@ def _check_db_state_node(state: StockState) -> dict:
     for art in ("analysis.returns", "analysis.volatility", "analysis.sma_20_50_100_200"):
         if art in requested:
             updates.append(art)
+    # Allow wavelet analysis when requested via settings flag or explicit request
+    want_wavelet = bool(getattr(settings, "wavelet", False)) or (
+        "analysis.wavelet_modwt_j5_sym4" in requested
+    )
+    if want_wavelet:
+        updates.append("analysis.wavelet_modwt_j5_sym4")
 
     _logger.info(
         "stocks.check_db_state: slug=%s requested=%s coverage_end=%s updates=%s",
@@ -253,6 +266,81 @@ def _render_report_node(state: StockState) -> dict:
     return {}
 
 
+def _compute_wavelet_node(state: StockState) -> dict:
+    settings: Settings = state["settings"]
+    instrument = state["instrument"]
+    slug = state.get("_slug") or instrument_id_to_slug(str(instrument.get("instrument_id")))
+    paths = state.get("_paths") or StockPaths(root=(Path(settings.output_dir) / "stocks"))
+    requested = set(state.get("requested_artifacts") or [])
+    if "analysis.wavelet_modwt_j5_sym4" not in requested and not bool(
+        getattr(settings, "wavelet", False)
+    ):
+        return {}
+    ohlc = read_primary_ohlc(paths, slug)
+    rows = ohlc.get("data", []) or []
+    dates = [r.get("date") for r in rows]
+    closes = [float(r.get("close", 0.0)) for r in rows]
+
+    # Compute SWT-based MODWT on full history, slice internally to last 2Y
+    try:
+        result = compute_modwt_logreturns(dates=dates, closes=closes, level=5, wavelet="sym4")
+    except Exception:
+        # Best-effort; do not fail the whole pipeline
+        _logger.warning("stocks.wavelet: transform failed", exc_info=True)
+        return {}
+
+    # Baseline returns aligned to result.dates for energy check
+    import numpy as _np
+
+    def _compute_lr(_closes: list[float]) -> _np.ndarray:
+        arr = _np.asarray(_closes, dtype=float)
+        lr = _np.diff(_np.log(arr))
+        return lr
+
+    all_lr = _compute_lr(closes)
+    # Align by dates: result dates correspond to closes[1:] dates; select the last target_len
+    target_len = len(result.dates)
+    baseline_returns = all_lr[-target_len:]
+    spectrum = compute_variance_spectrum(result, baseline_returns)
+    histos = compute_histograms(result.details, bins=50)
+
+    # Enrich metadata
+    analysis_start = result.dates[0] if result.dates else None
+    analysis_end = result.dates[-1] if result.dates else None
+    meta = {
+        **result.meta,
+        "ticker": ohlc.get("primary_ticker"),
+        "instrument_id": ohlc.get("instrument_id"),
+        "analysis_start": analysis_start,
+        "analysis_end": analysis_end,
+    }
+
+    # Write outputs
+    from ..stocks.db import _write_json, utcnow_iso  # reuse internal writer
+
+    coeffs_doc = to_coefficients_json(ticker=slug, result=result)
+    coeffs_doc["metadata"].update({"analysis_start": analysis_start, "analysis_end": analysis_end})
+    coeffs_doc["generated_at"] = utcnow_iso()
+    _write_json(paths.analysis_wavelet_coeffs_json(slug), coeffs_doc)
+
+    hist_doc = to_volatility_histogram_json(
+        ticker=slug, spectrum=spectrum, histos=histos, meta=meta
+    )
+    hist_doc["generated_at"] = utcnow_iso()
+    _write_json(paths.analysis_wavelet_hist_json(slug), hist_doc)
+
+    # Update artifacts in meta
+    try:
+        meta_doc = read_meta(paths, slug)
+        meta_doc.setdefault("artifacts", {}).setdefault("analysis.wavelet_modwt_j5_sym4", {})[
+            "last_updated"
+        ] = utcnow_iso()
+        write_meta(paths, slug, meta_doc)
+    except Exception:
+        _logger.warning("stocks.wavelet: failed to update meta", exc_info=True)
+
+    return {}
+
 def _commit_metadata_node(state: StockState) -> dict:
     settings: Settings = state["settings"]
     instrument = state["instrument"]
@@ -296,6 +384,7 @@ def build_stocks_graph() -> Any:
     graph.add_node("compute_returns", _compute_returns_node)
     graph.add_node("compute_volatility", _compute_volatility_node)
     graph.add_node("compute_sma", _compute_sma_node)
+    graph.add_node("compute_wavelet", _compute_wavelet_node)
     graph.add_node("commit_metadata", _commit_metadata_node)
     graph.add_node("render_report", _render_report_node)
 
@@ -312,7 +401,9 @@ def build_stocks_graph() -> Any:
     # Always compute analysis when requested
     graph.add_edge("compute_returns", "compute_volatility")
     graph.add_edge("compute_volatility", "compute_sma")
-    graph.add_edge("compute_sma", "render_report")
+    # Wavelet is optional; run after SMA (node will check requested_artifacts)
+    graph.add_edge("compute_sma", "compute_wavelet")
+    graph.add_edge("compute_wavelet", "render_report")
     graph.add_edge("render_report", "commit_metadata")
     graph.add_edge("commit_metadata", END)
     return graph.compile()

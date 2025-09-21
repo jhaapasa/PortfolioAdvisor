@@ -17,6 +17,7 @@
         "./input",
         "--output-dir",
         "./output",
+        "--wavelet",
         "--verbose",
         "--agent-progress"
       ],
@@ -43,6 +44,7 @@
         "stock",
         "--ticker",
         "AAPL",
+        "--wavelet",
         "--verbose",
         "--agent-progress"
       ],

@@ -29,6 +29,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--ticker", help="Single stock ticker for --mode stock")
     p.add_argument("--instrument-id", help="Canonical instrument_id for --mode stock")
+    p.add_argument(
+        "--wavelet",
+        action="store_true",
+        help="Compute MODWT(SWT) J=5 Sym4 wavelet analysis on log-returns",
+    )
 
     # Env overrides
     p.add_argument("--openai-api-key")
@@ -75,6 +80,7 @@ def main(argv: list[str] | None = None) -> int:
     instrument_id = overrides.pop("instrument_id", None)
     if mode == "portfolio":
         try:
+            # Ensure wavelet flag is forwarded to Settings via overrides
             output_path = analyze_portfolio(input_dir=input_dir, output_dir=output_dir, **overrides)
         except Exception as exc:
             print(f"Error: {exc}", file=sys.stderr)
@@ -95,8 +101,34 @@ def main(argv: list[str] | None = None) -> int:
             verbose=bool(settings.verbose),
             agent_progress=bool(settings.agent_progress),
         )
-        # Build instrument with a safe primary_ticker fallback from instrument_id when missing
-        iid = instrument_id or (f"cid:stocks:us:composite:{ticker}" if ticker else None)
+        # Prefer existing instrument_id/slug if a ticker dir already exists for this symbol
+        iid = instrument_id
+        if not iid and ticker:
+            try:
+                from .stocks.db import StockPaths, read_meta
+
+                paths = StockPaths(root=(Path(settings.output_dir) / "stocks"))
+                tickers_root = paths.root / "tickers"
+                if tickers_root.exists():
+                    for candidate in tickers_root.iterdir():
+                        if not candidate.is_dir():
+                            continue
+                        meta_path = candidate / "meta.json"
+                        if not meta_path.exists():
+                            continue
+                        import json as _json
+
+                        with meta_path.open("r", encoding="utf-8") as fh:
+                            meta = _json.load(fh) or {}
+                        if str(meta.get("primary_ticker") or "").upper() == str(ticker).upper():
+                            cand_iid = meta.get("instrument_id")
+                            if cand_iid:
+                                iid = cand_iid
+                                break
+            except Exception:
+                iid = None
+        # Fallback to composite if still unknown
+        iid = iid or (f"cid:stocks:us:composite:{ticker}" if ticker else None)
         symbol = None
         if iid and not ticker:
             try:
@@ -107,7 +139,17 @@ def main(argv: list[str] | None = None) -> int:
             "instrument_id": iid,
             "primary_ticker": ticker or symbol,
         }
-        update_instrument(settings, instrument)
+        requested = None
+        if bool(overrides.get("wavelet")):
+            # Include standard analysis artifacts plus wavelet output
+            requested = [
+                "primary.ohlc_daily",
+                "analysis.returns",
+                "analysis.volatility",
+                "analysis.sma_20_50_100_200",
+                "analysis.wavelet_modwt_j5_sym4",
+            ]
+        update_instrument(settings, instrument, requested_artifacts=requested)
     except Exception as exc:  # pragma: no cover - network/provider specific
         print(f"Error: {exc}", file=sys.stderr)
         return 1

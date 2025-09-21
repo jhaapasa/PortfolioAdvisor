@@ -67,10 +67,14 @@ class Settings(BaseSettings):
     # Caching
     skip_llm_cache: bool = Field(default=False, alias="SKIP_LLM_CACHE")
 
+    # Optional analysis feature flags
+    wavelet: bool = Field(default=False, alias="WAVELET")
+
     model_config = SettingsConfigDict(
         env_file=".env",
         extra="ignore",
         json_loads=_permissive_json_loads,
+        populate_by_name=True,
     )
 
     @field_validator("input_dir", "output_dir")
