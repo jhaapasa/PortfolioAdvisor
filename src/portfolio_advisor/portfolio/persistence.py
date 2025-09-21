@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import contextlib
 import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-# Reuse atomic write and helper patterns from stocks/db.py within the package
-from ..utils.fs import utcnow_iso, write_json_atomic
+from ..utils.fs import dir_lock, utcnow_iso, write_json_atomic
 from ..utils.slug import slugify
 
 
@@ -233,11 +231,10 @@ def append_history_diffs(
             }
             lines.append(json.dumps(entry, separators=(",", ":")))
 
-    # Append lines atomically under a simple file lock
+    # Append lines atomically under a directory lock
     paths.history_dir().mkdir(parents=True, exist_ok=True)
     lock_dir = paths.history_dir() / ".lock"
-    # Simple lock using directory creation (single-process mostly)
-    with _simple_lock(lock_dir):
+    with dir_lock(lock_dir):  # single-process/simple multi-process guard
         if lines:
             tmp = paths.changes_log().with_suffix(paths.changes_log().suffix + ".tmp")
             # Write existing content + new lines to tmp, then replace
@@ -254,24 +251,3 @@ def append_history_diffs(
                 fh.write("\n")
             os.replace(tmp, paths.changes_log())
     return str(paths.changes_log())
-
-
-@contextlib.contextmanager
-def _simple_lock(lock_path: Path):  # pragma: no cover - straightforward
-    import time
-
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-    deadline = time.time() + 10
-    while True:
-        try:
-            os.mkdir(lock_path)
-            break
-        except FileExistsError:
-            if time.time() > deadline:
-                raise TimeoutError(f"Timed out acquiring lock: {lock_path}")
-            time.sleep(0.05)
-    try:
-        yield
-    finally:
-        with contextlib.suppress(Exception):
-            os.rmdir(lock_path)

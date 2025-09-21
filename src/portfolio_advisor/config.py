@@ -69,7 +69,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(
         env_file=".env",
-        extra="allow",
+        extra="ignore",
         json_loads=_permissive_json_loads,
     )
 

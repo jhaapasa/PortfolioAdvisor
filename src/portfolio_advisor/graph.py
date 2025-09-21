@@ -164,14 +164,26 @@ def build_graph() -> Any:
         as_of = max(dates) if dates else None
         append_history_diffs(getattr(settings, "portfolio_dir"), prev, holdings, as_of)
 
-        # Kick off stocks updates (sequential for now)
+        return {
+            "portfolio_persisted": True,
+            "instruments": instruments,
+            "baskets": baskets,
+        }
+
+    graph.add_node("commit_portfolio", _commit_portfolio_node)
+
+    def _update_stocks_node(state: GraphState) -> dict:
+        settings = state["settings"]
+        instruments = state.get("instruments", []) or []
         try:
             update_all_for_instruments(settings, instruments)
         except Exception:
-            # Non-fatal; continue
             pass
+        return {}
 
-        # Fan out baskets using a compiled baskets graph
+    def _run_baskets_node(state: GraphState) -> dict:
+        settings = state["settings"]
+        baskets = state.get("baskets", []) or []
         compiled_basket = build_basket_graph()
         reports: list[dict] = []
         for b in baskets:
@@ -182,14 +194,10 @@ def build_graph() -> Any:
                     reports.append(rep)
             except Exception:
                 continue
-        return {
-            "portfolio_persisted": True,
-            "instruments": instruments,
-            "baskets": baskets,
-            "basket_reports": reports,
-        }
+        return {"basket_reports": reports}
 
-    graph.add_node("commit_portfolio", _commit_portfolio_node)
+    graph.add_node("update_stocks", _update_stocks_node)
+    graph.add_node("run_baskets", _run_baskets_node)
     graph.add_node("analyst", analyst_node, defer=True)
 
     graph.set_entry_point("ingestion")
@@ -201,7 +209,9 @@ def build_graph() -> Any:
     graph.add_conditional_edges("dispatch_resolve", _dispatch_resolve_tasks)
     graph.add_edge("resolve_one", "join_after_resolve")
     graph.add_edge("join_after_resolve", "commit_portfolio")
-    graph.add_edge("commit_portfolio", "analyst")
+    graph.add_edge("commit_portfolio", "update_stocks")
+    graph.add_edge("update_stocks", "run_baskets")
+    graph.add_edge("run_baskets", "analyst")
     graph.add_edge("analyst", END)
 
     return graph.compile()
