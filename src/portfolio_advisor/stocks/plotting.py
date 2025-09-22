@@ -88,3 +88,76 @@ def render_candlestick_ohlcv_1y(output_dir: Path, ohlc: dict[str, Any]) -> Path 
         except Exception:  # pragma: no cover - defensive cleanup
             pass
     return out_path
+
+
+def plot_wavelet_variance_spectrum(
+    output_dir: Path,
+    normalized: dict[str, float],
+    title: str | None = None,
+    subtitle: str | None = None,
+) -> Path:
+    """Render normalized wavelet variance spectrum bar chart into report directory.
+
+    Bars are expected for keys D1..D5 and S5; missing keys are skipped.
+    The chart is saved as wavelet_variance_spectrum.png next to the candle chart.
+    """
+    # Prepare output
+    report_dir = output_dir / "report"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    out_path = report_dir / "wavelet_variance_spectrum.png"
+
+    # Stable order and human labels with day ranges
+    order = ["D1", "D2", "D3", "D4", "D5", "S5"]
+    scale_labels = {
+        "D1": "D1 (2–4d)",
+        "D2": "D2 (4–8d)",
+        "D3": "D3 (8–16d)",
+        "D4": "D4 (16–32d)",
+        "D5": "D5 (32–64d)",
+        "S5": "S5 (>64d)",
+    }
+    xs = [scale_labels[k] for k in order if k in normalized]
+    ys = [float(normalized[k]) for k in order if k in normalized]
+
+    # Guard plotting with a lock
+    with _plot_lock:
+        try:
+            import matplotlib.pyplot as plt  # type: ignore
+        except Exception as exc:  # pragma: no cover - dependency missing
+            raise RuntimeError("matplotlib is required for plotting") from exc
+
+        # Match general look-and-feel (yahoo style used for candles). We'll keep a clean style.
+        fig, ax = plt.subplots(figsize=(12, 4), constrained_layout=True)
+        bars = ax.bar(xs, ys, color="#1f77b4")
+        ax.set_ylabel("Percent of variance")
+        ax.set_ylim(0, max(100.0, max(ys) * 1.15 if ys else 100.0))
+        # Annotate bars with values
+        for rect, val in zip(bars, ys):
+            ax.annotate(
+                f"{val:.1f}%",
+                xy=(rect.get_x() + rect.get_width() / 2, rect.get_height()),
+                xytext=(0, 3),
+                textcoords="offset points",
+                ha="center",
+                va="bottom",
+                fontsize=9,
+            )
+
+        # Titles
+        if title or subtitle:
+            if title and subtitle:
+                ax.set_title(f"{title}\n{subtitle}")
+            elif title:
+                ax.set_title(title)
+            else:
+                ax.set_title(subtitle)
+
+        ax.set_xlabel("Wavelet bands (sym4, daily log-returns)")
+        # Rotate labels a bit for readability
+        for tick in ax.get_xticklabels():
+            tick.set_rotation(0)
+
+        fig.savefig(str(out_path), dpi=150, bbox_inches="tight")
+        plt.close(fig)
+
+    return out_path

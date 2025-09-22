@@ -179,3 +179,33 @@ def to_volatility_histogram_json(
     }
 
 
+def normalize_variance_spectrum(
+    per_level: dict[str, Any], order: list[str] | None = None
+) -> dict[str, float]:
+    """Normalize per-level variances to percentages that sum to 100.
+
+    Parameters
+    ----------
+    per_level: mapping like {"D1": var1, ..., "S5": varS}
+    order: explicit ordering of bands. Defaults to [D1..D5, S5].
+
+    Returns
+    -------
+    Ordered dict-like mapping (by iteration) of band -> percent (0..100).
+    Missing bands are treated as 0.0; if total is 0, returns 0.0 for all.
+    """
+    default_order = [f"D{i}" for i in range(1, 6)] + ["S5"]
+    bands = order or default_order
+    raw_values: list[float] = []
+    prepared: dict[str, float] = {}
+    for key in bands:
+        try:
+            val = float(per_level.get(key, 0.0) or 0.0)
+        except Exception:
+            val = 0.0
+        prepared[key] = val
+        raw_values.append(val)
+    total = float(sum(raw_values))
+    if total <= 0.0:
+        return {k: 0.0 for k in bands}
+    return {k: (prepared[k] / total) * 100.0 for k in bands}

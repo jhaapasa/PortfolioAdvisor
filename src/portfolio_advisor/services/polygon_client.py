@@ -65,7 +65,7 @@ class PolygonClient:
             # Best-effort cleanup
             pass
 
-    def __enter__(self) -> "PolygonClient":
+    def __enter__(self) -> PolygonClient:
         self._ensure_client()
         return self
 

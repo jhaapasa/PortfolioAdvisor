@@ -3,7 +3,11 @@ from __future__ import annotations
 import datetime as dt
 from pathlib import Path
 
-from portfolio_advisor.stocks.plotting import render_candlestick_ohlcv_1y
+from portfolio_advisor.stocks.plotting import (
+    plot_wavelet_variance_spectrum,
+    render_candlestick_ohlcv_1y,
+)
+from portfolio_advisor.stocks.wavelet import normalize_variance_spectrum
 
 
 def _make_ohlc(days: int = 260) -> dict:
@@ -50,3 +54,15 @@ def test_render_skips_on_short_data(tmp_path: Path):
     ohlc = _make_ohlc(50)
     out = render_candlestick_ohlcv_1y(tmp_path, ohlc)
     assert out is None
+
+
+def test_plot_wavelet_variance_spectrum(tmp_path: Path):
+    # Construct a simple per-level variance and normalize
+    per_level = {"D1": 1.0, "D2": 2.0, "D3": 3.0, "D4": 4.0, "D5": 5.0, "S5": 6.0}
+    normalized = normalize_variance_spectrum(per_level)
+    # Percentages should sum to ~100
+    assert abs(sum(normalized.values()) - 100.0) < 1e-6
+    # Render
+    out = plot_wavelet_variance_spectrum(tmp_path, normalized, title="Wavelet Variance Spectrum")
+    assert out.exists()
+    assert out.stat().st_size > 0

@@ -25,7 +25,7 @@ from ..stocks.db import (
     write_meta,
     write_primary_ohlc,
 )
-from ..stocks.plotting import render_candlestick_ohlcv_1y
+from ..stocks.plotting import plot_wavelet_variance_spectrum, render_candlestick_ohlcv_1y
 from ..stocks.wavelet import (
     compute_histograms,
     compute_modwt_logreturns,
@@ -137,9 +137,7 @@ def _fetch_primary_node(state: StockState) -> dict:
         start_date = current.get("coverage", {}).get("end_date")
         if start_date:
             # next day after end_date
-            start = str(
-                dt.datetime.strptime(start_date, "%Y-%m-%d").date() + dt.timedelta(days=1)
-            )
+            start = str(dt.datetime.strptime(start_date, "%Y-%m-%d").date() + dt.timedelta(days=1))
         else:
             # default to a reasonable backfill horizon (5y) to avoid huge first-run fetches
             start = (dt.date.today() - dt.timedelta(days=5 * 365)).isoformat()
@@ -152,9 +150,7 @@ def _fetch_primary_node(state: StockState) -> dict:
             start,
             today,
         )
-        new_rows = list(
-            client.list_aggs_daily(ticker=ticker, from_date=start, to_date=today)
-        )
+        new_rows = list(client.list_aggs_daily(ticker=ticker, from_date=start, to_date=today))
         if new_rows:
             merged = append_ohlc_rows(current, new_rows)
         else:
@@ -267,6 +263,31 @@ def _render_report_node(state: StockState) -> dict:
             _logger.info("stocks.render_report: wrote %s", written)
     except Exception:
         _logger.warning("stocks.render_report: rendering failed", exc_info=True)
+
+    # Render wavelet variance spectrum bar chart when histogram exists
+    try:
+        hist_path = paths.analysis_wavelet_hist_json(slug)
+        if hist_path.exists():
+            import json as _json
+
+            with hist_path.open("r", encoding="utf-8") as fh:
+                hist_doc = _json.load(fh)
+            spectrum = hist_doc.get("variance_spectrum") or {}
+            per_level = spectrum.get("per_level") or {}
+            # Normalize to percentages
+            from ..stocks.wavelet import normalize_variance_spectrum
+
+            normalized = normalize_variance_spectrum(per_level)
+            title = "Wavelet Variance Spectrum (Normalized)"
+            as_of = (ohlc.get("coverage") or {}).get("end_date")
+            subtitle = f"{ohlc.get('primary_ticker') or ''} — as of {as_of}" if as_of else None
+            out = plot_wavelet_variance_spectrum(
+                ticker_dir, normalized, title=title, subtitle=subtitle
+            )
+            if out is not None:
+                _logger.info("stocks.render_report: wrote %s", out)
+    except Exception:
+        _logger.warning("stocks.render_report: wavelet spectrum rendering failed", exc_info=True)
     return {}
 
 
@@ -344,6 +365,7 @@ def _compute_wavelet_node(state: StockState) -> dict:
         _logger.warning("stocks.wavelet: failed to update meta", exc_info=True)
 
     return {}
+
 
 def _commit_metadata_node(state: StockState) -> dict:
     settings: Settings = state["settings"]

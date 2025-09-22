@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import atexit
 import json
 import logging
 import os
-from datetime import UTC, datetime
-import atexit
 import threading
+from datetime import UTC, datetime
 from typing import Any
 
 

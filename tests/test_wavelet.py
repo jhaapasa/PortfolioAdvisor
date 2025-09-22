@@ -23,9 +23,7 @@ def _make_synthetic_closes(n: int) -> tuple[list[str], list[float]]:
         d += timedelta(days=1)
     # Create synthetic log returns with mixed frequencies and mild noise
     t = np.arange(len(dates), dtype=float)
-    lr = 0.001 * np.sin(2 * math.pi * t / 10.0) + 0.0005 * np.sin(
-        2 * math.pi * t / 40.0
-    )
+    lr = 0.001 * np.sin(2 * math.pi * t / 10.0) + 0.0005 * np.sin(2 * math.pi * t / 40.0)
     rng = np.random.default_rng(42)
     lr += rng.normal(0.0, 0.0002, size=lr.shape)
     # Build close prices from returns
@@ -59,5 +57,3 @@ def test_wavelet_energy_partition_and_alignment():
     for v in histos.values():
         assert len(v["bin_edges"]) == 33
         assert len(v["counts"]) == 32
-
-
