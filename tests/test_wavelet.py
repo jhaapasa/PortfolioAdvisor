@@ -7,8 +7,10 @@ import numpy as np
 
 from portfolio_advisor.stocks.wavelet import (
     compute_histograms,
+    compute_modwt_logprice,
     compute_modwt_logreturns,
     compute_variance_spectrum,
+    reconstruct_logprice_series,
 )
 
 
@@ -57,3 +59,33 @@ def test_wavelet_energy_partition_and_alignment():
     for v in histos.values():
         assert len(v["bin_edges"]) == 33
         assert len(v["counts"]) == 32
+
+
+def test_logprice_transform_and_reconstruction_behaviors():
+    dates, closes = _make_synthetic_closes(800)
+    # Log-price transform aligns to window and yields D1..D5 + S5
+    price_result = compute_modwt_logprice(dates=dates, closes=closes, level=5, wavelet="sym4")
+    assert len(price_result.dates) == min(504, len(dates))
+    assert len(price_result.details) == 5
+    for d in price_result.details:
+        assert d.shape[0] == len(price_result.dates)
+    assert price_result.scaling.shape[0] == len(price_result.dates)
+
+    # Reconstructions: full sum should approximate original prices over window
+    recon_dates, recon_map, recon_meta = reconstruct_logprice_series(
+        dates=dates, closes=closes, level=5, wavelet="sym4"
+    )
+    assert len(recon_dates) == min(504, len(dates))
+    # Ensure required keys
+    assert "S5" in recon_map
+    assert "S5_D5_D4_D3_D2_D1" in recon_map
+    full = np.array(recon_map["S5_D5_D4_D3_D2_D1"], dtype=float)
+    window_orig = np.array(closes[-len(recon_dates) :], dtype=float)
+    # Compare relative RMSE to avoid scale dependence
+    denom = max(1e-9, float(np.mean(np.abs(window_orig))))
+    rmse = float(np.sqrt(np.mean((full - window_orig) ** 2))) / denom
+    assert rmse < 0.02  # within 2%
+    # Variance decreases as we remove detail bands
+    var_full = float(np.var(full))
+    var_s5 = float(np.var(np.array(recon_map["S5"], dtype=float)))
+    assert var_s5 < var_full

@@ -68,7 +68,7 @@ def compute_modwt_logreturns(
     # Tail mirror-pad to multiple of 2^level
     padded, pad_len = _tail_pad_to_power_of_two_length(log_returns, power=level)
 
-    # SWT with energy normalization; keep all approximation levels for stable return type
+    # SWT with energy normalization for variance properties
     coeffs = pywt.swt(data=padded, wavelet=wavelet, level=level, trim_approx=False, norm=True)
     # coeffs: list of (cA_j, cD_j) for j=1..level
     details = [pair[1] for pair in coeffs]
@@ -94,6 +94,72 @@ def compute_modwt_logreturns(
         "norm": True,
         "trim_approx": False,
         "original_returns_length": int(len(ret_dates)),
+        "padded_length": int(padded.size),
+        "pad_len": int(pad_len),
+        "analysis_window_length": int(target_len),
+    }
+    return WaveletTransformResult(
+        details=details,
+        scaling=scaling,
+        dates=list(aligned_dates),
+        meta=meta,
+    )
+
+
+def compute_modwt_logprice(
+    dates: list[str],
+    closes: list[float],
+    level: int = 5,
+    wavelet: str = "sym4",
+) -> WaveletTransformResult:
+    if len(closes) < (level + 34):
+        raise ValueError("Insufficient close prices for stable SWT at requested level")
+
+    # Sanitize close prices: forward/back-fill non-finite or non-positive
+    arr = np.asarray(list(closes), dtype=float)
+    good = np.isfinite(arr) & (arr > 0)
+    if not np.all(good):
+        for i in range(arr.size):
+            if not (arr[i] > 0 and math.isfinite(arr[i])):
+                arr[i] = arr[i - 1] if i > 0 else np.nan
+        if not (arr[0] > 0 and math.isfinite(arr[0])):
+            first_valid = next((x for x in arr if x > 0 and math.isfinite(x)), np.nan)
+            arr[0] = first_valid
+            for i in range(1, arr.size):
+                if not (arr[i] > 0 and math.isfinite(arr[i])):
+                    arr[i] = arr[i - 1]
+
+    log_price = np.log(arr)
+
+    # Tail mirror-pad to multiple of 2^level
+    padded, pad_len = _tail_pad_to_power_of_two_length(log_price, power=level)
+
+    # SWT with energy normalization; keep all approximation levels for stable return type
+    coeffs = pywt.swt(data=padded, wavelet=wavelet, level=level, trim_approx=False, norm=True)
+    # coeffs: list of (cA_j, cD_j) for j=1..level
+    details = [pair[1] for pair in coeffs]
+    scaling = coeffs[-1][0]
+
+    # Remove tail padding
+    if pad_len:
+        details = [d[:-pad_len] for d in details]
+        scaling = scaling[:-pad_len]
+
+    # Align to last 2 years (approx 504 trading days); keep min(len, 504)
+    target_len = min(504, len(dates))
+    start_idx = len(dates) - target_len
+    aligned_dates = dates[start_idx:]
+    details = [d[start_idx:] for d in details]
+    scaling = scaling[start_idx:]
+
+    meta = {
+        "wavelet": wavelet,
+        "level": level,
+        "series": "log_price",
+        "padding": "symmetric_tail_only",
+        "norm": True,
+        "trim_approx": False,
+        "original_length": int(len(dates)),
         "padded_length": int(padded.size),
         "pad_len": int(pad_len),
         "analysis_window_length": int(target_len),
@@ -155,7 +221,8 @@ def to_coefficients_json(
     for i, arr in enumerate(result.details):
         key = f"D{i+1}"
         coeffs[key] = [{"date": d, "value": float(v)} for d, v in zip(result.dates, arr.tolist())]
-    coeffs["S5"] = [
+    s_key = f"S{len(result.details)}"
+    coeffs[s_key] = [
         {"date": d, "value": float(v)} for d, v in zip(result.dates, result.scaling.tolist())
     ]
     return {
@@ -209,3 +276,113 @@ def normalize_variance_spectrum(
     if total <= 0.0:
         return {k: 0.0 for k in bands}
     return {k: (prepared[k] / total) * 100.0 for k in bands}
+
+
+def reconstruct_logprice_series(
+    dates: list[str],
+    closes: list[float],
+    level: int = 5,
+    wavelet: str = "sym4",
+) -> tuple[list[str], dict[str, list[float]], dict[str, Any]]:
+    """Reconstruct price series from log-price SWT by progressively adding bands.
+
+    Padding/analysis strategy mirrors log-returns pipeline:
+    - Compute on full history for proper context (fills the beginning of the window)
+    - Tail-pad with symmetric mirroring to multiple of 2^level
+    - Reconstruct on padded arrays, then unpad and slice the last ~504 days
+    - Exponentiate reconstructed log-price back to price units
+    """
+    if len(closes) < (level + 34):
+        raise ValueError("Insufficient close prices for stable SWT at requested level")
+
+    # Sanitize close prices
+    arr = np.asarray(list(closes), dtype=float)
+    good = np.isfinite(arr) & (arr > 0)
+    if not np.all(good):
+        for i in range(arr.size):
+            if not (arr[i] > 0 and math.isfinite(arr[i])):
+                arr[i] = arr[i - 1] if i > 0 else np.nan
+        if not (arr[0] > 0 and math.isfinite(arr[0])):
+            first_valid = next((x for x in arr if x > 0 and math.isfinite(x)), np.nan)
+            arr[0] = first_valid
+            for i in range(1, arr.size):
+                if not (arr[i] > 0 and math.isfinite(arr[i])):
+                    arr[i] = arr[i - 1]
+
+    log_price = np.log(arr)
+
+    # Tail-pad to multiple of 2^level
+    padded, pad_len = _tail_pad_to_power_of_two_length(log_price, power=level)
+
+    # SWT on padded series with norm=False to enable faithful inverse reconstruction
+    coeffs = pywt.swt(data=padded, wavelet=wavelet, level=level, trim_approx=False, norm=False)
+    J = len(coeffs)
+
+    # Reconstruction sets: start with S_J, then progressively add D_J, D_{J-1}, ...
+    recon_sets: list[tuple[str, set[str]]] = []
+    # S_J only
+    recon_sets.append((f"S{J}", {f"S{J}"}))
+    # S_J + D_J + D_{J-1} + ...
+    accum: set[str] = {f"S{J}"}
+    for j in range(J, 0, -1):
+        band = f"D{j}"
+        accum = set(accum) | {band}
+        name = "_".join(sorted(accum, key=lambda k: (k[0] != "S", -int(k[1:]))))
+        recon_sets.append((name, set(accum)))
+
+    def _zero_like(x: np.ndarray) -> np.ndarray:
+        return np.zeros_like(x)
+
+    recon: dict[str, list[float]] = {}
+    for name, include in recon_sets:
+        # Build coeffs list for iswt: list of (cA_j, cD_j) from j=1..J
+        pairs: list[tuple[np.ndarray, np.ndarray]] = []
+        for j in range(1, J + 1):
+            cA_j, cD_j = coeffs[j - 1]
+            # Always keep approximation coefficients at all levels;
+            # zero-out only the detail coefficients not included in this reconstruction.
+            a = cA_j
+            d = cD_j if (f"D{j}" in include) else (_zero_like(cD_j))
+            pairs.append((a, d))
+        recon_log = pywt.iswt(pairs, wavelet)
+        if pad_len:
+            recon_log = recon_log[:-pad_len]
+        # Slice to last ~504 days
+        target_len = min(504, len(dates))
+        start_idx = len(dates) - target_len
+        recon_log = recon_log[start_idx:]
+        # Back to price units
+        recon[name] = np.exp(recon_log).astype(float).tolist()
+
+    # Aligned dates for window
+    target_len = min(504, len(dates))
+    start_idx = len(dates) - target_len
+    aligned_dates = dates[start_idx:]
+
+    meta = {
+        "wavelet": wavelet,
+        "level": level,
+        "series": "price",
+        "reconstructed_from": "log_price",
+        "method": "iswt",
+        "padding": "symmetric_tail_only",
+        "norm": False,
+        "analysis_window_length": int(target_len),
+    }
+    return list(aligned_dates), recon, meta
+
+
+def to_reconstructed_prices_json(
+    ticker: str,
+    dates: list[str],
+    recon: dict[str, list[float]],
+    meta: dict[str, Any],
+) -> dict[str, Any]:
+    recon_series: dict[str, list[dict[str, float]]] = {}
+    for name, values in recon.items():
+        recon_series[name] = [{"date": d, "value": float(v)} for d, v in zip(dates, list(values))]
+    return {
+        "ticker": ticker,
+        "metadata": meta,
+        "reconstructions": recon_series,
+    }

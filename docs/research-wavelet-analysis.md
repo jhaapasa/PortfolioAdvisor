@@ -305,6 +305,7 @@ The combination of the primary signal (trend acceleration) and the confirmation 
   * A **Neutral Signal (0)** is generated otherwise.  
 * **Output:** A ternary time series of \[+1, \-1, 0\] signals. This quantitative output can be directly integrated into a backtesting framework or an automated trading system, providing a robust, multi-scale, and data-driven approach to capturing major market turning points.
 
+
 ## **Conclusion**
 
 The Maximal Overlap Discrete Wavelet Transform provides a sophisticated and powerful framework for analyzing financial time series, offering a significant advancement over traditional time-domain or frequency-domain methods. By decomposing data into multiple time scales, MODWT allows for a nuanced and granular investigation of market dynamics that aligns with the reality of heterogeneous market participants and overlapping economic cycles.

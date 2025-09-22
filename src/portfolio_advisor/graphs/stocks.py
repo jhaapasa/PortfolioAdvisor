@@ -28,9 +28,12 @@ from ..stocks.db import (
 from ..stocks.plotting import plot_wavelet_variance_spectrum, render_candlestick_ohlcv_1y
 from ..stocks.wavelet import (
     compute_histograms,
+    compute_modwt_logprice,
     compute_modwt_logreturns,
     compute_variance_spectrum,
+    reconstruct_logprice_series,
     to_coefficients_json,
+    to_reconstructed_prices_json,
     to_volatility_histogram_json,
 )
 from ..utils.slug import instrument_id_to_slug
@@ -353,6 +356,27 @@ def _compute_wavelet_node(state: StockState) -> dict:
     )
     hist_doc["generated_at"] = utcnow_iso()
     _write_json(paths.analysis_wavelet_hist_json(slug), hist_doc)
+
+    # Also compute SWT on log price and reconstruct price series
+    try:
+        price_result = compute_modwt_logprice(dates=dates, closes=closes, level=5, wavelet="sym4")
+        price_coeffs_doc = to_coefficients_json(ticker=slug, result=price_result)
+        price_coeffs_doc["metadata"].update(
+            {"analysis_start": analysis_start, "analysis_end": analysis_end}
+        )
+        price_coeffs_doc["generated_at"] = utcnow_iso()
+        _write_json(paths.analysis_wavelet_coeffs_logprice_json(slug), price_coeffs_doc)
+
+        recon_dates, recon_map, recon_meta = reconstruct_logprice_series(
+            dates=dates, closes=closes, level=5, wavelet="sym4"
+        )
+        recon_doc = to_reconstructed_prices_json(
+            ticker=slug, dates=recon_dates, recon=recon_map, meta=recon_meta
+        )
+        recon_doc["generated_at"] = utcnow_iso()
+        _write_json(paths.analysis_wavelet_reconstructed_prices_json(slug), recon_doc)
+    except Exception:
+        _logger.warning("stocks.wavelet: log-price transform/reconstruction failed", exc_info=True)
 
     # Update artifacts in meta
     try:

@@ -38,6 +38,12 @@ class StockPaths:
     def analysis_wavelet_hist_json(self, ticker: str) -> Path:
         return self.ticker_dir(ticker) / "analysis" / "volatility_histogram.json"
 
+    def analysis_wavelet_coeffs_logprice_json(self, ticker: str) -> Path:
+        return self.ticker_dir(ticker) / "analysis" / "wavelet_coefficients_logprice_sym4.json"
+
+    def analysis_wavelet_reconstructed_prices_json(self, ticker: str) -> Path:
+        return self.ticker_dir(ticker) / "analysis" / "wavelet_reconstructed_prices.json"
+
     def report_dir(self, ticker: str) -> Path:
         return self.ticker_dir(ticker) / "report"
 
