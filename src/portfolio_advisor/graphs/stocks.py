@@ -25,7 +25,11 @@ from ..stocks.db import (
     write_meta,
     write_primary_ohlc,
 )
-from ..stocks.plotting import plot_wavelet_variance_spectrum, render_candlestick_ohlcv_1y
+from ..stocks.plotting import (
+    plot_wavelet_variance_spectrum,
+    render_candlestick_ohlcv_1y,
+    render_candlestick_ohlcv_2y_wavelet_trends,
+)
 from ..stocks.wavelet import (
     compute_histograms,
     compute_modwt_logprice,
@@ -291,6 +295,21 @@ def _render_report_node(state: StockState) -> dict:
                 _logger.info("stocks.render_report: wrote %s", out)
     except Exception:
         _logger.warning("stocks.render_report: wavelet spectrum rendering failed", exc_info=True)
+
+    # Render 2Y candlestick with wavelet trend overlays (if reconstructions exist)
+    try:
+        import json as _json
+
+        recon_doc = None
+        recon_path = paths.analysis_wavelet_reconstructed_prices_json(slug)
+        if recon_path.exists():
+            with recon_path.open("r", encoding="utf-8") as fh:
+                recon_doc = _json.load(fh)
+        out2 = render_candlestick_ohlcv_2y_wavelet_trends(ticker_dir, ohlc, recon_doc)
+        if out2 is not None:
+            _logger.info("stocks.render_report: wrote %s", out2)
+    except Exception:
+        _logger.warning("stocks.render_report: 2y wavelet overlay rendering failed", exc_info=True)
     return {}
 
 

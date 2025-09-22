@@ -50,6 +50,9 @@ class StockPaths:
     def report_candle_1y_png(self, ticker: str) -> Path:
         return self.report_dir(ticker) / "candle_ohlcv_1y.png"
 
+    def report_candle_2y_wavelet_trends_png(self, ticker: str) -> Path:
+        return self.report_dir(ticker) / "candle_ohlcv_2y_wavelet_trends.png"
+
     def lock_dir(self, ticker: str) -> Path:
         return self.ticker_dir(ticker) / ".lock"
 

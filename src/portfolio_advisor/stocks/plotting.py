@@ -68,7 +68,6 @@ def render_candlestick_ohlcv_1y(output_dir: Path, ohlc: dict[str, Any]) -> Path 
         raise RuntimeError("mplfinance is required for plotting") from exc
 
     style = "yahoo"
-    savefig = dict(fname=str(out_path), dpi=150, bbox_inches="tight")
     # Guard plotting with a lock to avoid global state races in Matplotlib
     with _plot_lock:
         mpf.plot(
@@ -78,7 +77,7 @@ def render_candlestick_ohlcv_1y(output_dir: Path, ohlc: dict[str, Any]) -> Path 
             style=style,
             figsize=(12, 6),
             tight_layout=True,
-            savefig=savefig,
+            savefig=dict(fname=str(out_path), dpi=150, bbox_inches="tight"),
         )
         try:
             # Explicitly close current figure to release Matplotlib resources
@@ -87,6 +86,143 @@ def render_candlestick_ohlcv_1y(output_dir: Path, ohlc: dict[str, Any]) -> Path 
             _plt.close("all")
         except Exception:  # pragma: no cover - defensive cleanup
             pass
+    return out_path
+
+
+def render_candlestick_ohlcv_2y_wavelet_trends(
+    output_dir: Path, ohlc: dict[str, Any], recon_doc: dict[str, Any] | None
+) -> Path | None:
+    """Render a 2-year candlestick chart with volume and wavelet trend overlays.
+
+    Overlays are reconstructed price series from wavelet bands contained in
+    recon_doc["reconstructions"], if available. Missing or malformed overlays are
+    ignored and the function gracefully falls back to plain candles.
+
+    Returns the written path, or None if data insufficient.
+    """
+    df = _ohlc_to_dataframe(ohlc)
+    if df is None or len(df) < 180:  # require ~6 months minimum
+        _logger.info("plotting.skip: insufficient data rows=%s", 0 if df is None else len(df))
+        return None
+
+    # Slice the last ~504 trading days (approx. 2 years)
+    tail = df.tail(504)
+    report_dir = output_dir / "report"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    out_path = report_dir / "candle_ohlcv_2y_wavelet_trends.png"
+
+    try:
+        import mplfinance as mpf  # type: ignore
+    except Exception as exc:  # pragma: no cover - dependency missing
+        raise RuntimeError("mplfinance is required for plotting") from exc
+
+    # Prepare overlays when reconstruction doc is provided
+    addplots: list[Any] = []
+    if recon_doc and isinstance(recon_doc, dict):
+        try:
+            import pandas as pd  # type: ignore
+        except Exception as exc:  # pragma: no cover - dependency missing is a runtime error
+            raise RuntimeError("pandas is required for plotting") from exc
+
+        recon_all = (recon_doc.get("reconstructions") or {}) if isinstance(recon_doc, dict) else {}
+
+        # Preferred keys in increasing detail; only plot those present to avoid clutter.
+        preferred_keys = [
+            # Restricted to canonical names present in reconstructed prices
+            "S5",
+            "S5_D5_D4",
+            "S5_D5_D4_D3_D2",
+            "S5_D5_D4_D3_D2_D1",  # full
+        ]
+
+        # Color palette (consistent with matplotlib default palette order)
+        colors = {
+            # Only canonical names
+            "S5": "#d62728",  # red (long trend)
+            "S5_D5": "#ff7f0e",  # orange (allowed but not selected by default)
+            "S5_D5_D4": "#2ca02c",  # green
+            "S5_D5_D4_D3": "#1f77b4",  # blue (allowed but not selected by default)
+            "S5_D5_D4_D3_D2": "#9467bd",  # purple
+            "S5_D5_D4_D3_D2_D1": "#8c564b",  # brown (full)
+        }
+
+        # Build at most 4 overlays (to keep the chart readable)
+        overlays_built = 0
+        for key in preferred_keys:
+            if key not in recon_all:
+                continue
+            series_rows = recon_all.get(key) or []
+            if not series_rows:
+                continue
+            try:
+                s_df = pd.DataFrame(series_rows)
+                if "date" not in s_df.columns or "value" not in s_df.columns:
+                    continue
+                s_df["date"] = pd.to_datetime(s_df["date"], errors="coerce")
+                s_df = s_df.set_index("date").sort_index()
+                s = pd.to_numeric(s_df["value"], errors="coerce")
+                # Align to tail index; restrict to index intersection
+                s = s.reindex(tail.index).dropna(how="all")
+                if s.notna().sum() < max(30, int(0.1 * len(tail))):
+                    # Skip nearly-empty overlays
+                    continue
+                ap = mpf.make_addplot(
+                    s,
+                    panel=0,
+                    color=colors.get(key, "#333333"),
+                    width=1.2,
+                )
+                addplots.append(ap)
+                overlays_built += 1
+                if overlays_built >= 4:
+                    break
+            except Exception:  # pragma: no cover - robust to bad data
+                _logger.debug(
+                    "plotting.overlay.skip: failed to build series for %s", key, exc_info=True
+                )
+                continue
+
+    style = "yahoo"
+    # Guard plotting with a lock to avoid global state races in Matplotlib
+    with _plot_lock:
+        fig = None
+        try:
+            if addplots:
+                fig, _axes = mpf.plot(  # type: ignore[assignment]
+                    tail,
+                    type="candle",
+                    volume=True,
+                    style=style,
+                    addplot=addplots,
+                    figsize=(12, 6),
+                    tight_layout=True,
+                    returnfig=True,
+                )
+            else:
+                fig, _axes = mpf.plot(  # type: ignore[assignment]
+                    tail,
+                    type="candle",
+                    volume=True,
+                    style=style,
+                    figsize=(12, 6),
+                    tight_layout=True,
+                    returnfig=True,
+                )
+            if fig is not None:
+                fig.savefig(str(out_path), dpi=150, bbox_inches="tight")
+        finally:
+            try:
+                # Explicitly close current figure to release Matplotlib resources
+                if fig is not None:
+                    import matplotlib.pyplot as _plt  # type: ignore
+
+                    _plt.close(fig)
+                else:
+                    import matplotlib.pyplot as _plt  # type: ignore
+
+                    _plt.close("all")
+            except Exception:  # pragma: no cover - defensive cleanup
+                pass
     return out_path
 
 

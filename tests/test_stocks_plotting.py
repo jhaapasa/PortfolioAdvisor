@@ -6,6 +6,7 @@ from pathlib import Path
 from portfolio_advisor.stocks.plotting import (
     plot_wavelet_variance_spectrum,
     render_candlestick_ohlcv_1y,
+    render_candlestick_ohlcv_2y_wavelet_trends,
 )
 from portfolio_advisor.stocks.wavelet import normalize_variance_spectrum
 
@@ -64,5 +65,48 @@ def test_plot_wavelet_variance_spectrum(tmp_path: Path):
     assert abs(sum(normalized.values()) - 100.0) < 1e-6
     # Render
     out = plot_wavelet_variance_spectrum(tmp_path, normalized, title="Wavelet Variance Spectrum")
+    assert out.exists()
+    assert out.stat().st_size > 0
+
+
+def _make_recon_doc_from_ohlc(ohlc: dict) -> dict:
+    # Build a minimal reconstruction doc aligned to the last ~504 trading days
+    rows = ohlc.get("data", [])
+    dates = [r["date"] for r in rows]
+    # Use close price as a proxy for a simple monotonic reconstruction (for test only)
+    closes = [float(r.get("close", 0.0)) for r in rows]
+    # Slice to last ~504 days
+    tail_len = min(504, len(dates))
+    dates = dates[-tail_len:]
+    closes = closes[-tail_len:]
+
+    def series(vals: list[float]):
+        return [{"date": d, "value": float(v)} for d, v in zip(dates, vals)]
+
+    return {
+        "ticker": "TEST",
+        "metadata": {"level": 5, "wavelet": "sym4"},
+        "reconstructions": {
+            "S5": series(closes),
+            "S5_D5": series([v * 1.001 for v in closes]),
+            "S5_D5_D4": series([v * 0.999 for v in closes]),
+            "S5_D5_D4_D3_D2_D1": series(closes),
+        },
+    }
+
+
+def test_render_candlestick_ohlcv_2y_wavelet_trends_with_overlays(tmp_path: Path):
+    ohlc = _make_ohlc(600)
+    recon_doc = _make_recon_doc_from_ohlc(ohlc)
+    out = render_candlestick_ohlcv_2y_wavelet_trends(tmp_path, ohlc, recon_doc)
+    assert out is not None
+    assert out.exists()
+    assert out.stat().st_size > 0
+
+
+def test_render_candlestick_ohlcv_2y_wavelet_trends_without_overlays(tmp_path: Path):
+    ohlc = _make_ohlc(600)
+    out = render_candlestick_ohlcv_2y_wavelet_trends(tmp_path, ohlc, None)
+    assert out is not None
     assert out.exists()
     assert out.stat().st_size > 0
