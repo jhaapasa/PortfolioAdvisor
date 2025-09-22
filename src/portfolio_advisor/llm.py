@@ -115,8 +115,6 @@ def build_llm(
 
     Prefer `get_llm(settings)` for shared, cached instances across agents.
     """
-    # Lazy import to keep optional dependency path clean
-    import httpx
     from langchain_openai import ChatOpenAI
 
     if not api_key:
@@ -137,15 +135,6 @@ def build_llm(
 
         return LoggingLLMProxy(DummyLLM())
 
-    # Build a dedicated httpx client with strict total timeout and sane limits
-    http_timeout = None
-    if request_timeout_s is not None:
-        try:
-            http_timeout = httpx.Timeout(float(request_timeout_s))
-        except Exception:  # pragma: no cover - defensive
-            http_timeout = httpx.Timeout(60.0)
-    http_client = httpx.Client(timeout=http_timeout) if http_timeout is not None else None
-
     llm = ChatOpenAI(
         model=model,
         temperature=temperature,
@@ -153,7 +142,6 @@ def build_llm(
         api_key=api_key,
         timeout=request_timeout_s,
         max_retries=0,
-        **({"http_client": http_client} if http_client is not None else {}),
         **({"base_url": api_base} if api_base else {}),
     )
     return LoggingLLMProxy(llm)

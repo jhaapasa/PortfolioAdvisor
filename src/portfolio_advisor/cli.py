@@ -92,8 +92,20 @@ def main(argv: list[str] | None = None) -> int:
             output_path = analyze_portfolio(input_dir=input_dir, output_dir=output_dir, **overrides)
         except Exception as exc:
             print(f"Error: {exc}", file=sys.stderr)
+            try:
+                import logging as _logging
+
+                _logging.shutdown()
+            except Exception:
+                pass
             return 1
         print(output_path)
+        try:
+            import logging as _logging
+
+            _logging.shutdown()
+        except Exception:
+            pass
         return 0
     # mode == stock
     if not (ticker or instrument_id):
@@ -161,6 +173,12 @@ def main(argv: list[str] | None = None) -> int:
         update_instrument(settings, instrument, requested_artifacts=requested)
     except Exception as exc:  # pragma: no cover - network/provider specific
         print(f"Error: {exc}", file=sys.stderr)
+        try:
+            import logging as _logging
+
+            _logging.shutdown()
+        except Exception:
+            pass
         return 1
     # Print the ticker directory path as output
     from .utils.slug import instrument_id_to_slug
@@ -168,6 +186,12 @@ def main(argv: list[str] | None = None) -> int:
     slug = instrument_id_to_slug(instrument.get("instrument_id"))
     ticker_dir = Path(output_dir) / "stocks" / "tickers" / slug
     print(str(ticker_dir))
+    try:
+        import logging as _logging
+
+        _logging.shutdown()
+    except Exception:
+        pass
     return 0
 
 

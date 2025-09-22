@@ -4,6 +4,8 @@ import json
 import logging
 import os
 from datetime import UTC, datetime
+import atexit
+import threading
 from typing import Any
 
 
@@ -100,3 +102,26 @@ def configure_logging(
     # Honor PYTHONWARNINGS to show/hide warnings if needed
     if os.environ.get("PYTHONWARNINGS"):
         logging.captureWarnings(True)
+
+    # Register a best-effort graceful shutdown to run before interpreter teardown
+    # to avoid late-finalization issues in Python 3.13 threading cleanup.
+    def _graceful_shutdown() -> None:  # pragma: no cover - called at process exit
+        try:
+            # Ensure worker threads/executors are joined before objects get GC'd
+            shutdown = getattr(threading, "_shutdown", None)
+            if callable(shutdown):
+                shutdown()
+        except Exception:
+            pass
+        try:
+            logging.shutdown()
+        except Exception:
+            pass
+
+    # Ensure we only register once even if configure_logging is called multiple times
+    if not getattr(configure_logging, "_pa_shutdown_registered", False):
+        try:
+            atexit.register(_graceful_shutdown)
+            setattr(configure_logging, "_pa_shutdown_registered", True)
+        except Exception:
+            pass

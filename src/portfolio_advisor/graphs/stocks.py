@@ -126,45 +126,49 @@ def _fetch_primary_node(state: StockState) -> dict:
     slug = state.get("_slug") or instrument_id_to_slug(iid)
     paths = state.get("_paths") or StockPaths(root=(Path(settings.output_dir) / "stocks"))
 
-    client = PolygonClient(
+    # Ensure HTTP resources are released promptly by using context manager
+    with PolygonClient(
         api_key=settings.polygon_api_key,
         trace=settings.verbose,
         timeout_s=settings.polygon_timeout_s,
-    )
+    ) as client:
+        # Determine date range: fetch full history if none, else from last coverage end + 1 day
+        current = read_primary_ohlc(paths, slug)
+        start_date = current.get("coverage", {}).get("end_date")
+        if start_date:
+            # next day after end_date
+            start = str(
+                dt.datetime.strptime(start_date, "%Y-%m-%d").date() + dt.timedelta(days=1)
+            )
+        else:
+            # default to a reasonable backfill horizon (5y) to avoid huge first-run fetches
+            start = (dt.date.today() - dt.timedelta(days=5 * 365)).isoformat()
+        today = dt.datetime.now(dt.UTC).date().isoformat()
 
-    # Determine date range: fetch full history if none, else from last coverage end + 1 day
-    current = read_primary_ohlc(paths, slug)
-    start_date = current.get("coverage", {}).get("end_date")
-    if start_date:
-        # next day after end_date
-        start = str(dt.datetime.strptime(start_date, "%Y-%m-%d").date() + dt.timedelta(days=1))
-    else:
-        # default to a reasonable backfill horizon (5y) to avoid huge first-run fetches
-        start = (dt.date.today() - dt.timedelta(days=5 * 365)).isoformat()
-    today = dt.datetime.now(dt.UTC).date().isoformat()
-
-    _logger.info(
-        "stocks.fetch_primary: slug=%s ticker=%s range=%s..%s",
-        slug,
-        ticker,
-        start,
-        today,
-    )
-    new_rows = list(client.list_aggs_daily(ticker=ticker, from_date=start, to_date=today))
-    if new_rows:
-        merged = append_ohlc_rows(current, new_rows)
-    else:
-        merged = current
-    merged["instrument_id"] = iid
-    merged["primary_ticker"] = ticker
-    write_primary_ohlc(paths, slug, merged)
-    _logger.info(
-        "stocks.fetch_primary: slug=%s wrote ohlc rows=%d coverage_end=%s",
-        slug,
-        len(merged.get("data", [])),
-        (merged.get("coverage") or {}).get("end_date"),
-    )
-    return {}
+        _logger.info(
+            "stocks.fetch_primary: slug=%s ticker=%s range=%s..%s",
+            slug,
+            ticker,
+            start,
+            today,
+        )
+        new_rows = list(
+            client.list_aggs_daily(ticker=ticker, from_date=start, to_date=today)
+        )
+        if new_rows:
+            merged = append_ohlc_rows(current, new_rows)
+        else:
+            merged = current
+        merged["instrument_id"] = iid
+        merged["primary_ticker"] = ticker
+        write_primary_ohlc(paths, slug, merged)
+        _logger.info(
+            "stocks.fetch_primary: slug=%s wrote ohlc rows=%d coverage_end=%s",
+            slug,
+            len(merged.get("data", [])),
+            (merged.get("coverage") or {}).get("end_date"),
+        )
+        return {}
 
 
 def _compute_returns_node(state: StockState) -> dict:
@@ -429,14 +433,23 @@ def update_all_for_instruments(
     import concurrent.futures as _futures
 
     max_workers = 4
+    # Explicitly request safe cancellation of pending futures on context exit
     with _futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [
             executor.submit(update_instrument, settings, inst, requested_artifacts)
             for inst in instruments
         ]
-        for f in futures:
+        try:
+            for f in futures:
+                try:
+                    f.result()
+                except Exception:
+                    # Best-effort; errors are isolated per instrument, but log for visibility
+                    _logger.warning("stocks.update_all: instrument update failed", exc_info=True)
+        finally:
+            # Python 3.9+ ThreadPoolExecutor supports shutdown(cancel_futures=True)
             try:
-                f.result()
-            except Exception:
-                # Best-effort; errors are isolated per instrument, but log for visibility
-                _logger.warning("stocks.update_all: instrument update failed", exc_info=True)
+                executor.shutdown(wait=True, cancel_futures=True)  # type: ignore[arg-type]
+            except TypeError:
+                # Older versions without cancel_futures
+                executor.shutdown(wait=True)

@@ -80,4 +80,11 @@ def render_candlestick_ohlcv_1y(output_dir: Path, ohlc: dict[str, Any]) -> Path 
             tight_layout=True,
             savefig=savefig,
         )
+        try:
+            # Explicitly close current figure to release Matplotlib resources
+            import matplotlib.pyplot as _plt  # type: ignore
+
+            _plt.close("all")
+        except Exception:  # pragma: no cover - defensive cleanup
+            pass
     return out_path
