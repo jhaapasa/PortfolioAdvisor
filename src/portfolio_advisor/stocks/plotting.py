@@ -118,6 +118,7 @@ def render_candlestick_ohlcv_2y_wavelet_trends(
 
     # Prepare overlays when reconstruction doc is provided
     addplots: list[Any] = []
+    legend_labels: list[str] = []
     if recon_doc and isinstance(recon_doc, dict):
         try:
             import pandas as pd  # type: ignore
@@ -143,59 +144,129 @@ def render_candlestick_ohlcv_2y_wavelet_trends(
             except Exception:
                 J = 5
 
-        # Preferred keys in increasing detail; only plot those present to avoid clutter.
-        # Build: S{J}, S{J}_D{J}, and a mid-level composite like S{J}_D{J}_..._D{max(2, J-3)}
-        preferred_keys: list[str] = []
-        preferred_keys.append(f"S{J}")
-        preferred_keys.append(f"S{J}_D{J}")
-        # Build a composite down to max(2, J-3)
-        parts = [f"S{J}"] + [f"D{i}" for i in range(J, max(1, J - 3), -1)]
-        composite = "_".join(parts)
-#        preferred_keys.append(composite)
+        # Prefer plotting all smooth S-levels S1..SJ if present; otherwise fall back.
+        s_level_keys = [
+            k
+            for k in recon_all.keys()
+            if isinstance(k, str) and k.startswith("S") and k[1:].isdigit()
+        ]
+        s_levels_present = sorted({int(k[1:]) for k in s_level_keys})
 
-        # Color palette (consistent with matplotlib default palette order)
-        # Assign colors deterministically based on key structure
-        colors = {
-            f"S{J}": "#d62728",
-            f"S{J}_D{J}": "#ff7f0e",
-            composite: "#9467bd",
-        }
+        if s_levels_present:
+            # Plot S_J, S_{J-1}, and S_{J-2} for progressive trend detail
+            max_level = max(s_levels_present)
+            target_levels = [max_level]  # Always include S_J (coarsest)
+            
+            # Add S_{J-1} and S_{J-2} if available
+            if max_level >= 2:
+                target_levels.append(max_level - 1)  # S_{J-1}
+            if max_level >= 3:
+                target_levels.append(max_level - 2)  # S_{J-2}
+            
+            # Color palette for the three levels
+            colors = ["#d62728", "#ff7f0e", "#2ca02c"]  # Red, Orange, Green
+            widths = [2.0, 1.7, 1.4]  # Decreasing thickness
+            alphas = [0.8, 0.7, 0.6]  # Decreasing opacity
+            
+            # Helper function to get day range for wavelet level
+            def get_day_range(level: int) -> str:
+                """Get the day range for a wavelet decomposition level assuming daily data."""
+                # For MODWT, level j corresponds to periods of approximately 2^j days
+                period = 2 ** level
+                return f"~{period} days"
+            
+            for i, k in enumerate(target_levels):
+                if k not in s_levels_present:
+                    continue
+                key = f"S{k}"
+                if key not in recon_all:
+                    continue
+                series_rows = recon_all.get(key) or []
+                if not series_rows:
+                    continue
+                try:
+                    s_df = pd.DataFrame(series_rows)
+                    if "date" not in s_df.columns or "value" not in s_df.columns:
+                        continue
+                    s_df["date"] = pd.to_datetime(s_df["date"], errors="coerce")
+                    s_df = s_df.set_index("date").sort_index()
+                    s = pd.to_numeric(s_df["value"], errors="coerce")
+                    s = s.reindex(tail.index).dropna(how="all")
+                    if s.notna().sum() < max(30, int(0.1 * len(tail))):
+                        continue
+                    
+                    # Visual encoding with distinct colors and decreasing thickness
+                    color = colors[i % len(colors)]
+                    width = widths[i % len(widths)]
+                    alpha = alphas[i % len(alphas)]
+                    
+                    # Create legend label with day range
+                    day_range = get_day_range(k)
+                    legend_label = f"S_{k} ({day_range})"
+                    legend_labels.append(legend_label)
+                    
+                    ap = mpf.make_addplot(
+                        s,
+                        panel=0,
+                        color=color,
+                        width=width,
+                        alpha=alpha,
+                    )
+                    addplots.append(ap)
+                except Exception:  # pragma: no cover - robust to bad data
+                    _logger.debug(
+                        "plotting.overlay.skip: failed to build S-level series for %s",
+                        key,
+                        exc_info=True,
+                    )
+                    continue
+        else:
+            # Fallback: plot a small set of representative reconstructions as before
+            preferred_keys: list[str] = []
+            preferred_keys.append(f"S{J}")
+            preferred_keys.append(f"S{J}_D{J}")
+            parts = [f"S{J}"] + [f"D{i}" for i in range(J, max(1, J - 3), -1)]
+            composite = "_".join(parts)
+            # preferred_keys.append(composite)
 
-        # Build at most 4 overlays (to keep the chart readable)
-        overlays_built = 0
-        for key in preferred_keys:
-            if key not in recon_all:
-                continue
-            series_rows = recon_all.get(key) or []
-            if not series_rows:
-                continue
-            try:
-                s_df = pd.DataFrame(series_rows)
-                if "date" not in s_df.columns or "value" not in s_df.columns:
+            colors = {
+                f"S{J}": "#d62728",
+                f"S{J}_D{J}": "#ff7f0e",
+                composite: "#9467bd",
+            }
+
+            overlays_built = 0
+            for key in preferred_keys:
+                if key not in recon_all:
                     continue
-                s_df["date"] = pd.to_datetime(s_df["date"], errors="coerce")
-                s_df = s_df.set_index("date").sort_index()
-                s = pd.to_numeric(s_df["value"], errors="coerce")
-                # Align to tail index; restrict to index intersection
-                s = s.reindex(tail.index).dropna(how="all")
-                if s.notna().sum() < max(30, int(0.1 * len(tail))):
-                    # Skip nearly-empty overlays
+                series_rows = recon_all.get(key) or []
+                if not series_rows:
                     continue
-                ap = mpf.make_addplot(
-                    s,
-                    panel=0,
-                    color=colors.get(key, "#333333"),
-                    width=1.2,
-                )
-                addplots.append(ap)
-                overlays_built += 1
-                if overlays_built >= 4:
-                    break
-            except Exception:  # pragma: no cover - robust to bad data
-                _logger.debug(
-                    "plotting.overlay.skip: failed to build series for %s", key, exc_info=True
-                )
-                continue
+                try:
+                    s_df = pd.DataFrame(series_rows)
+                    if "date" not in s_df.columns or "value" not in s_df.columns:
+                        continue
+                    s_df["date"] = pd.to_datetime(s_df["date"], errors="coerce")
+                    s_df = s_df.set_index("date").sort_index()
+                    s = pd.to_numeric(s_df["value"], errors="coerce")
+                    s = s.reindex(tail.index).dropna(how="all")
+                    if s.notna().sum() < max(30, int(0.1 * len(tail))):
+                        continue
+                    ap = mpf.make_addplot(
+                        s,
+                        panel=0,
+                        color=colors.get(key, "#333333"),
+                        width=1.2,
+                    )
+                    addplots.append(ap)
+                    overlays_built += 1
+                    if overlays_built >= 4:
+                        break
+                except Exception:  # pragma: no cover - robust to bad data
+                    _logger.debug(
+                        "plotting.overlay.skip: failed to build series for %s", key, exc_info=True
+                    )
+                    continue
 
     style = "yahoo"
     # Guard plotting with a lock to avoid global state races in Matplotlib
@@ -224,6 +295,27 @@ def render_candlestick_ohlcv_2y_wavelet_trends(
                     returnfig=True,
                 )
             if fig is not None:
+                # Add legend for wavelet trend overlays if we have any
+                if legend_labels:
+                    try:
+                        # Get the main price axis (usually the first one)
+                        ax = _axes[0] if isinstance(_axes, (list, tuple)) else _axes
+                        
+                        # Create legend entries for the overlays
+                        import matplotlib.lines as mlines  # type: ignore
+                        legend_elements = []
+                        colors = ["#d62728", "#ff7f0e", "#2ca02c"]  # Match the overlay colors
+                        
+                        for i, label in enumerate(legend_labels):
+                            color = colors[i % len(colors)]
+                            line = mlines.Line2D([], [], color=color, linewidth=2, label=label)
+                            legend_elements.append(line)
+                        
+                        # Add legend in upper left corner
+                        ax.legend(handles=legend_elements, loc='upper left', framealpha=0.9, fontsize=9)
+                    except Exception:  # pragma: no cover - legend is optional
+                        _logger.debug("Failed to add legend to wavelet trends plot", exc_info=True)
+                
                 fig.savefig(str(out_path), dpi=150, bbox_inches="tight")
         finally:
             try:
@@ -280,7 +372,7 @@ def plot_wavelet_variance_spectrum(
     # Human labels: Dk ~ [2^{k-1}, 2^{k}] days, S_J > 2^{J}
     def _range_label(k: int) -> str:
         low = 2 ** (k - 1)
-        high = 2 ** k
+        high = 2**k
         return f"D{k} ({low}–{high}d)"
 
     scale_labels = {f"D{i}": _range_label(i) for i in range(1, J + 1)}

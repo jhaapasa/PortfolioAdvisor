@@ -79,6 +79,9 @@ def test_logprice_transform_and_reconstruction_behaviors():
     # Ensure required keys
     assert "S5" in recon_map
     assert "S5_D5_D4_D3_D2_D1" in recon_map
+    # Verify that we have all S1..S5 smooth coefficients
+    for j in range(1, 6):
+        assert f"S{j}" in recon_map, f"Missing S{j} smooth coefficients"
     full = np.array(recon_map["S5_D5_D4_D3_D2_D1"], dtype=float)
     window_orig = np.array(closes[-len(recon_dates) :], dtype=float)
     # Compare relative RMSE to avoid scale dependence
@@ -89,3 +92,23 @@ def test_logprice_transform_and_reconstruction_behaviors():
     var_full = float(np.var(full))
     var_s5 = float(np.var(np.array(recon_map["S5"], dtype=float)))
     assert var_s5 < var_full
+    
+    # Verify MRA additivity: S_J + D_1 + ... + D_J should equal original signal
+    # Check if we have the full reconstruction (should be very close to original)
+    full_recon_key = "S5_D5_D4_D3_D2_D1"  # This should equal S_1 in MRA theory
+    if full_recon_key in recon_map and "S1" in recon_map:
+        full_recon = np.array(recon_map[full_recon_key], dtype=float)
+        s1_signal = np.array(recon_map["S1"], dtype=float)
+        # S1 and full reconstruction should be identical (both = original signal)
+        mra_diff = np.abs(full_recon - s1_signal)
+        max_diff = float(np.max(mra_diff))
+        rel_diff = max_diff / float(np.mean(np.abs(s1_signal)))
+        assert rel_diff < 0.01, f"S1 and full reconstruction differ by {rel_diff:.6f} (should be ~0)"
+    
+    # Verify smooth signal ordering: S1 should have highest variance, S5 lowest
+    if all(f"S{j}" in recon_map for j in range(1, 6)):
+        variances = [float(np.var(np.array(recon_map[f"S{j}"], dtype=float))) for j in range(1, 6)]
+        # Generally, variance should decrease as j increases (smoother signals)
+        # Allow some tolerance for numerical precision
+        for j in range(1, 4):  # Check S1 > S2, S2 > S3, S3 > S4 (S5 might be very small)
+            assert variances[j-1] >= variances[j] * 0.95, f"S{j} variance should be >= S{j+1} variance"

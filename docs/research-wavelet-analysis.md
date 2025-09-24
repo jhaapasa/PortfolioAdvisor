@@ -365,3 +365,5 @@ By adopting these methodologies, quantitative analysts and financial data scient
 40. Financial time series forecasting using optimized multistage wavelet regression approach \- PMC, accessed September 20, 2025, [https://pmc.ncbi.nlm.nih.gov/articles/PMC9030684/](https://pmc.ncbi.nlm.nih.gov/articles/PMC9030684/)  
 41. Identifying the major reversals of the BIST-30 index by extreme ..., accessed September 20, 2025, [https://www.emerald.com/insight/content/doi/10.1108/JCMS-10-2017-002/full/html](https://www.emerald.com/insight/content/doi/10.1108/JCMS-10-2017-002/full/html)  
 42. Detecting stock market turning points using wavelet leaders method \- ResearchGate, accessed September 20, 2025, [https://www.researchgate.net/publication/347385514\_Detecting\_stock\_market\_turning\_points\_using\_wavelet\_leaders\_method](https://www.researchgate.net/publication/347385514_Detecting_stock_market_turning_points_using_wavelet_leaders_method)
+
+

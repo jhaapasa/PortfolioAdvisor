@@ -18,6 +18,7 @@ from ..stocks.analysis import (
 from ..stocks.db import (
     StockPaths,
     append_ohlc_rows,
+    compute_last_complete_trading_day,
     ensure_ticker_scaffold,
     read_meta,
     read_primary_ohlc,
@@ -25,7 +26,6 @@ from ..stocks.db import (
     write_meta,
     write_primary_ohlc,
 )
-from ..stocks.db import compute_last_complete_trading_day
 from ..stocks.plotting import (
     plot_wavelet_variance_spectrum,
     render_candlestick_ohlcv_1y,
@@ -104,9 +104,11 @@ def _check_db_state_node(state: StockState) -> dict:
         if art in requested:
             updates.append(art)
     # Allow wavelet analysis when requested via settings flag, wavelet level, or explicit request
-    want_wavelet = bool(getattr(settings, "wavelet", False)) or bool(
-        getattr(settings, "wavelet_level", 0)
-    ) or ("analysis.wavelet_modwt" in requested)
+    want_wavelet = (
+        bool(getattr(settings, "wavelet", False))
+        or bool(getattr(settings, "wavelet_level", 0))
+        or ("analysis.wavelet_modwt" in requested)
+    )
     if want_wavelet:
         updates.append("analysis.wavelet_modwt")
 
@@ -397,6 +399,7 @@ def _compute_wavelet_node(state: StockState) -> dict:
             closes=closes,
             level=int(getattr(settings, "wavelet_level", 5)),
             wavelet="sym4",
+            max_level=6,  # Use consistent max level for MRA consistency
         )
         recon_doc = to_reconstructed_prices_json(
             ticker=slug, dates=recon_dates, recon=recon_map, meta=recon_meta

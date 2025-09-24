@@ -68,11 +68,12 @@ def compute_modwt_logreturns(
     # Tail mirror-pad to multiple of 2^level
     padded, pad_len = _tail_pad_to_power_of_two_length(log_returns, power=level)
 
-    # SWT with energy normalization for variance properties
-    coeffs = pywt.swt(data=padded, wavelet=wavelet, level=level, trim_approx=False, norm=True)
-    # coeffs: list of (cA_j, cD_j) for j=1..level
-    details = [pair[1] for pair in coeffs]
-    scaling = coeffs[-1][0]
+    # SWT with proper MODWT parameters: trim_approx=True for energy conservation and variance partitioning
+    coeffs = pywt.swt(data=padded, wavelet=wavelet, level=level, trim_approx=True, norm=True)
+    # coeffs format with trim_approx=True: [cA_J, cD_J, cD_{J-1}, ..., cD_1]
+    scaling = coeffs[0]  # cA_J (approximation at final level)
+    details = coeffs[1:]  # [cD_J, cD_{J-1}, ..., cD_1]
+    details.reverse()  # Convert to [cD_1, cD_2, ..., cD_J] for consistency
 
     # Remove tail padding
     if pad_len:
@@ -134,11 +135,12 @@ def compute_modwt_logprice(
     # Tail mirror-pad to multiple of 2^level
     padded, pad_len = _tail_pad_to_power_of_two_length(log_price, power=level)
 
-    # SWT with energy normalization; keep all approximation levels for stable return type
-    coeffs = pywt.swt(data=padded, wavelet=wavelet, level=level, trim_approx=False, norm=True)
-    # coeffs: list of (cA_j, cD_j) for j=1..level
-    details = [pair[1] for pair in coeffs]
-    scaling = coeffs[-1][0]
+    # SWT with proper MODWT parameters: trim_approx=True for energy conservation and variance partitioning
+    coeffs = pywt.swt(data=padded, wavelet=wavelet, level=level, trim_approx=True, norm=True)
+    # coeffs format with trim_approx=True: [cA_J, cD_J, cD_{J-1}, ..., cD_1]
+    scaling = coeffs[0]  # cA_J (approximation at final level)
+    details = coeffs[1:]  # [cD_J, cD_{J-1}, ..., cD_1]
+    details.reverse()  # Convert to [cD_1, cD_2, ..., cD_J] for consistency
 
     # Remove tail padding
     if pad_len:
@@ -218,11 +220,13 @@ def to_coefficients_json(
     result: WaveletTransformResult,
 ) -> dict[str, Any]:
     coeffs: dict[str, Any] = {}
+    # Use proper coefficient notation: cD for detail coefficients
     for i, arr in enumerate(result.details):
-        key = f"D{i+1}"
+        key = f"cD{i+1}"
         coeffs[key] = [{"date": d, "value": float(v)} for d, v in zip(result.dates, arr.tolist())]
-    s_key = f"S{len(result.details)}"
-    coeffs[s_key] = [
+    # Use proper coefficient notation: cA for approximation/scaling coefficients
+    ca_key = f"cA{len(result.details)}"
+    coeffs[ca_key] = [
         {"date": d, "value": float(v)} for d, v in zip(result.dates, result.scaling.tolist())
     ]
     return {
@@ -253,13 +257,15 @@ def normalize_variance_spectrum(
 
     Parameters
     ----------
-    per_level: mapping like {"D1": var1, ..., "S5": varS}
+    per_level: mapping like {"D1": var1, ..., "S5": varS} for MRA signal bands
     order: explicit ordering of bands. Defaults to [D1..D5, S5].
 
     Returns
     -------
     Ordered dict-like mapping (by iteration) of band -> percent (0..100).
     Missing bands are treated as 0.0; if total is 0, returns 0.0 for all.
+    
+    Note: This function operates on MRA signal variance spectrum, not raw coefficients.
     """
     if order is None:
         # Infer J from keys present
@@ -303,6 +309,7 @@ def reconstruct_logprice_series(
     closes: list[float],
     level: int = 5,
     wavelet: str = "sym4",
+    max_level: int | None = None,
 ) -> tuple[list[str], dict[str, list[float]], dict[str, Any]]:
     """Reconstruct price series from log-price SWT by progressively adding bands.
 
@@ -331,14 +338,40 @@ def reconstruct_logprice_series(
 
     log_price = np.log(arr)
 
-    # Tail-pad to multiple of 2^level
-    padded, pad_len = _tail_pad_to_power_of_two_length(log_price, power=level)
+    # Tail-pad to multiple of 2^max_level for consistent MRA across all decomposition levels
+    effective_max_level = max_level or level
+    padded, pad_len = _tail_pad_to_power_of_two_length(log_price, power=effective_max_level)
 
-    # SWT on padded series with norm=False to enable faithful inverse reconstruction
-    coeffs = pywt.swt(data=padded, wavelet=wavelet, level=level, trim_approx=False, norm=False)
-    J = len(coeffs)
-
-    # Reconstruction sets: start with S_J, then progressively add D_J, D_{J-1}, ...
+    # Use pywt.mra for proper MODWT multiresolution analysis
+    mra_components_log = pywt.mra(padded, wavelet=wavelet, level=level, transform='swt')
+    # mra_components_log = [S_J, D_J, D_{J-1}, ..., D_1] (all in log domain)
+    J = level
+    
+    # Remove padding and apply windowing
+    target_len = min(504, len(dates))
+    start_idx = len(dates) - target_len
+    
+    if pad_len:
+        mra_components_log = [comp[:-pad_len] for comp in mra_components_log]
+    
+    mra_components_log = [comp[start_idx:] for comp in mra_components_log]
+    
+    # Build all reconstructions using proper MRA additivity in log domain
+    recon: dict[str, list[float]] = {}
+    
+    # S_j = S_J + D_{j+1} + ... + D_J (using MRA components directly)
+    for j in range(1, J + 1):
+        s_key = f"S{j}"
+        # S_j = S_J + sum(D_k for k=j+1..J)
+        log_s_j = mra_components_log[0].copy()  # Start with S_J
+        for k in range(j + 1, J + 1):
+            # D_k is at index J + 1 - k in mra_components_log
+            d_k_index = J + 1 - k
+            if d_k_index < len(mra_components_log):
+                log_s_j += mra_components_log[d_k_index]
+        recon[s_key] = np.exp(log_s_j).astype(float).tolist()
+    
+    # Build cumulative reconstructions for backward compatibility
     recon_sets: list[tuple[str, set[str]]] = []
     # S_J only
     recon_sets.append((f"S{J}", {f"S{J}"}))
@@ -349,30 +382,18 @@ def reconstruct_logprice_series(
         accum = set(accum) | {band}
         name = "_".join(sorted(accum, key=lambda k: (k[0] != "S", -int(k[1:]))))
         recon_sets.append((name, set(accum)))
-
-    def _zero_like(x: np.ndarray) -> np.ndarray:
-        return np.zeros_like(x)
-
-    recon: dict[str, list[float]] = {}
+    
     for name, include in recon_sets:
-        # Build coeffs list for iswt: list of (cA_j, cD_j) from j=1..J
-        pairs: list[tuple[np.ndarray, np.ndarray]] = []
-        for j in range(1, J + 1):
-            cA_j, cD_j = coeffs[j - 1]
-            # Always keep approximation coefficients at all levels;
-            # zero-out only the detail coefficients not included in this reconstruction.
-            a = cA_j
-            d = cD_j if (f"D{j}" in include) else (_zero_like(cD_j))
-            pairs.append((a, d))
-        recon_log = pywt.iswt(pairs, wavelet)
-        if pad_len:
-            recon_log = recon_log[:-pad_len]
-        # Slice to last ~504 days
-        target_len = min(504, len(dates))
-        start_idx = len(dates) - target_len
-        recon_log = recon_log[start_idx:]
-        # Back to price units
-        recon[name] = np.exp(recon_log).astype(float).tolist()
+        if name not in recon:  # Don't overwrite S_j keys
+            # Build cumulative reconstruction in log domain
+            log_cumulative = mra_components_log[0].copy()  # Start with S_J
+            for component in include:
+                if component.startswith("D"):
+                    j = int(component[1:])
+                    d_j_index = J + 1 - j
+                    if d_j_index < len(mra_components_log):
+                        log_cumulative += mra_components_log[d_j_index]
+            recon[name] = np.exp(log_cumulative).astype(float).tolist()
 
     # Aligned dates for window
     target_len = min(504, len(dates))
@@ -386,7 +407,9 @@ def reconstruct_logprice_series(
         "reconstructed_from": "log_price",
         "method": "iswt",
         "padding": "symmetric_tail_only",
-        "norm": False,
+        "norm": True,
+        "trim_approx": True,
+        "max_level_for_padding": effective_max_level,
         "analysis_window_length": int(target_len),
     }
     return list(aligned_dates), recon, meta
