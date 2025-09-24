@@ -32,7 +32,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument(
         "--wavelet",
         action="store_true",
-        help="Compute MODWT(SWT) J=5 Sym4 wavelet analysis on log-returns",
+        help=(
+            "Compute MODWT(SWT) Sym4 wavelet analysis. "
+            "Use --wavelet-level to set decomposition level (default 5)."
+        ),
+    )
+    p.add_argument(
+        "-J",
+        "--wavelet-level",
+        type=int,
+        help="Wavelet decomposition level J (1-8). Implies --wavelet when provided.",
     )
 
     # Env overrides
@@ -86,6 +95,9 @@ def main(argv: list[str] | None = None) -> int:
     mode = overrides.pop("mode", "portfolio")
     ticker = overrides.pop("ticker", None)
     instrument_id = overrides.pop("instrument_id", None)
+    # If user provided a wavelet level, ensure wavelet analysis is enabled
+    if "wavelet_level" in overrides:
+        overrides["wavelet"] = True
     if mode == "portfolio":
         try:
             # Ensure wavelet flag is forwarded to Settings via overrides

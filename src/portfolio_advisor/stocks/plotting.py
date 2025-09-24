@@ -125,25 +125,40 @@ def render_candlestick_ohlcv_2y_wavelet_trends(
             raise RuntimeError("pandas is required for plotting") from exc
 
         recon_all = (recon_doc.get("reconstructions") or {}) if isinstance(recon_doc, dict) else {}
+        meta = recon_doc.get("metadata") or {}
+        # Determine J from metadata or infer from available keys (highest S?)
+        J = None
+        try:
+            J = int(meta.get("level")) if meta.get("level") is not None else None
+        except Exception:
+            J = None
+        if J is None:
+            try:
+                skeys = [
+                    int(k[1:])
+                    for k in recon_all.keys()
+                    if isinstance(k, str) and k.startswith("S") and k[1:].isdigit()
+                ]
+                J = max(skeys) if skeys else 5
+            except Exception:
+                J = 5
 
         # Preferred keys in increasing detail; only plot those present to avoid clutter.
-        preferred_keys = [
-            # Restricted to canonical names present in reconstructed prices
-            "S5",
-            "S5_D5_D4",
-            "S5_D5_D4_D3_D2",
-            "S5_D5_D4_D3_D2_D1",  # full
-        ]
+        # Build: S{J}, S{J}_D{J}, and a mid-level composite like S{J}_D{J}_..._D{max(2, J-3)}
+        preferred_keys: list[str] = []
+        preferred_keys.append(f"S{J}")
+        preferred_keys.append(f"S{J}_D{J}")
+        # Build a composite down to max(2, J-3)
+        parts = [f"S{J}"] + [f"D{i}" for i in range(J, max(1, J - 3), -1)]
+        composite = "_".join(parts)
+#        preferred_keys.append(composite)
 
         # Color palette (consistent with matplotlib default palette order)
+        # Assign colors deterministically based on key structure
         colors = {
-            # Only canonical names
-            "S5": "#d62728",  # red (long trend)
-            "S5_D5": "#ff7f0e",  # orange (allowed but not selected by default)
-            "S5_D5_D4": "#2ca02c",  # green
-            "S5_D5_D4_D3": "#1f77b4",  # blue (allowed but not selected by default)
-            "S5_D5_D4_D3_D2": "#9467bd",  # purple
-            "S5_D5_D4_D3_D2_D1": "#8c564b",  # brown (full)
+            f"S{J}": "#d62728",
+            f"S{J}_D{J}": "#ff7f0e",
+            composite: "#9467bd",
         }
 
         # Build at most 4 overlays (to keep the chart readable)
@@ -242,16 +257,34 @@ def plot_wavelet_variance_spectrum(
     report_dir.mkdir(parents=True, exist_ok=True)
     out_path = report_dir / "wavelet_variance_spectrum.png"
 
-    # Stable order and human labels with day ranges
-    order = ["D1", "D2", "D3", "D4", "D5", "S5"]
-    scale_labels = {
-        "D1": "D1 (2–4d)",
-        "D2": "D2 (4–8d)",
-        "D3": "D3 (8–16d)",
-        "D4": "D4 (16–32d)",
-        "D5": "D5 (32–64d)",
-        "S5": "S5 (>64d)",
-    }
+    # Determine J from provided keys; default to 5 if ambiguous
+    max_detail = 0
+    for k in normalized.keys():
+        if isinstance(k, str) and k.startswith("D") and k[1:].isdigit():
+            try:
+                max_detail = max(max_detail, int(k[1:]))
+            except Exception:
+                pass
+    s_level = 0
+    for k in normalized.keys():
+        if isinstance(k, str) and k.startswith("S") and k[1:].isdigit():
+            try:
+                s_level = max(s_level, int(k[1:]))
+            except Exception:
+                pass
+    J = max(max_detail, s_level)
+    if J <= 0:
+        J = 5
+    order = [f"D{i}" for i in range(1, J + 1)] + [f"S{J}"]
+
+    # Human labels: Dk ~ [2^{k-1}, 2^{k}] days, S_J > 2^{J}
+    def _range_label(k: int) -> str:
+        low = 2 ** (k - 1)
+        high = 2 ** k
+        return f"D{k} ({low}–{high}d)"
+
+    scale_labels = {f"D{i}": _range_label(i) for i in range(1, J + 1)}
+    scale_labels[f"S{J}"] = f"S{J} (> {2 ** J}d)"
     xs = [scale_labels[k] for k in order if k in normalized]
     ys = [float(normalized[k]) for k in order if k in normalized]
 

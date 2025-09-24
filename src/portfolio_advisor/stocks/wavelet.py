@@ -261,8 +261,28 @@ def normalize_variance_spectrum(
     Ordered dict-like mapping (by iteration) of band -> percent (0..100).
     Missing bands are treated as 0.0; if total is 0, returns 0.0 for all.
     """
-    default_order = [f"D{i}" for i in range(1, 6)] + ["S5"]
-    bands = order or default_order
+    if order is None:
+        # Infer J from keys present
+        max_detail = 0
+        for k in per_level.keys():
+            if isinstance(k, str) and k.startswith("D") and k[1:].isdigit():
+                try:
+                    max_detail = max(max_detail, int(k[1:]))
+                except Exception:
+                    pass
+        s_level = 0
+        for k in per_level.keys():
+            if isinstance(k, str) and k.startswith("S") and k[1:].isdigit():
+                try:
+                    s_level = max(s_level, int(k[1:]))
+                except Exception:
+                    pass
+        J = max(max_detail, s_level)
+        if J <= 0:
+            J = 5
+        bands = [f"D{i}" for i in range(1, J + 1)] + [f"S{J}"]
+    else:
+        bands = order
     raw_values: list[float] = []
     prepared: dict[str, float] = {}
     for key in bands:

@@ -25,6 +25,7 @@ from ..stocks.db import (
     write_meta,
     write_primary_ohlc,
 )
+from ..stocks.db import compute_last_complete_trading_day
 from ..stocks.plotting import (
     plot_wavelet_variance_spectrum,
     render_candlestick_ohlcv_1y,
@@ -102,12 +103,12 @@ def _check_db_state_node(state: StockState) -> dict:
     for art in ("analysis.returns", "analysis.volatility", "analysis.sma_20_50_100_200"):
         if art in requested:
             updates.append(art)
-    # Allow wavelet analysis when requested via settings flag or explicit request
-    want_wavelet = bool(getattr(settings, "wavelet", False)) or (
-        "analysis.wavelet_modwt_j5_sym4" in requested
-    )
+    # Allow wavelet analysis when requested via settings flag, wavelet level, or explicit request
+    want_wavelet = bool(getattr(settings, "wavelet", False)) or bool(
+        getattr(settings, "wavelet_level", 0)
+    ) or ("analysis.wavelet_modwt" in requested)
     if want_wavelet:
-        updates.append("analysis.wavelet_modwt_j5_sym4")
+        updates.append("analysis.wavelet_modwt")
 
     _logger.info(
         "stocks.check_db_state: slug=%s requested=%s coverage_end=%s updates=%s",
@@ -148,16 +149,21 @@ def _fetch_primary_node(state: StockState) -> dict:
         else:
             # default to a reasonable backfill horizon (5y) to avoid huge first-run fetches
             start = (dt.date.today() - dt.timedelta(days=5 * 365)).isoformat()
-        today = dt.datetime.now(dt.UTC).date().isoformat()
+        # Use last complete trading day as end to avoid requesting intraday/unsupported ranges
+        end = compute_last_complete_trading_day()
 
         _logger.info(
             "stocks.fetch_primary: slug=%s ticker=%s range=%s..%s",
             slug,
             ticker,
             start,
-            today,
+            end,
         )
-        new_rows = list(client.list_aggs_daily(ticker=ticker, from_date=start, to_date=today))
+        # If start is after end, nothing to fetch
+        if start > end:
+            new_rows = []
+        else:
+            new_rows = list(client.list_aggs_daily(ticker=ticker, from_date=start, to_date=end))
         if new_rows:
             merged = append_ohlc_rows(current, new_rows)
         else:
@@ -319,9 +325,7 @@ def _compute_wavelet_node(state: StockState) -> dict:
     slug = state.get("_slug") or instrument_id_to_slug(str(instrument.get("instrument_id")))
     paths = state.get("_paths") or StockPaths(root=(Path(settings.output_dir) / "stocks"))
     requested = set(state.get("requested_artifacts") or [])
-    if "analysis.wavelet_modwt_j5_sym4" not in requested and not bool(
-        getattr(settings, "wavelet", False)
-    ):
+    if "analysis.wavelet_modwt" not in requested and not bool(getattr(settings, "wavelet", False)):
         return {}
     ohlc = read_primary_ohlc(paths, slug)
     rows = ohlc.get("data", []) or []
@@ -330,7 +334,8 @@ def _compute_wavelet_node(state: StockState) -> dict:
 
     # Compute SWT-based MODWT on full history, slice internally to last 2Y
     try:
-        result = compute_modwt_logreturns(dates=dates, closes=closes, level=5, wavelet="sym4")
+        lvl = int(getattr(settings, "wavelet_level", 5))
+        result = compute_modwt_logreturns(dates=dates, closes=closes, level=lvl, wavelet="sym4")
     except Exception:
         # Best-effort; do not fail the whole pipeline
         _logger.warning("stocks.wavelet: transform failed", exc_info=True)
@@ -378,7 +383,8 @@ def _compute_wavelet_node(state: StockState) -> dict:
 
     # Also compute SWT on log price and reconstruct price series
     try:
-        price_result = compute_modwt_logprice(dates=dates, closes=closes, level=5, wavelet="sym4")
+        lvl = int(getattr(settings, "wavelet_level", 5))
+        price_result = compute_modwt_logprice(dates=dates, closes=closes, level=lvl, wavelet="sym4")
         price_coeffs_doc = to_coefficients_json(ticker=slug, result=price_result)
         price_coeffs_doc["metadata"].update(
             {"analysis_start": analysis_start, "analysis_end": analysis_end}
@@ -387,7 +393,10 @@ def _compute_wavelet_node(state: StockState) -> dict:
         _write_json(paths.analysis_wavelet_coeffs_logprice_json(slug), price_coeffs_doc)
 
         recon_dates, recon_map, recon_meta = reconstruct_logprice_series(
-            dates=dates, closes=closes, level=5, wavelet="sym4"
+            dates=dates,
+            closes=closes,
+            level=int(getattr(settings, "wavelet_level", 5)),
+            wavelet="sym4",
         )
         recon_doc = to_reconstructed_prices_json(
             ticker=slug, dates=recon_dates, recon=recon_map, meta=recon_meta
@@ -400,7 +409,7 @@ def _compute_wavelet_node(state: StockState) -> dict:
     # Update artifacts in meta
     try:
         meta_doc = read_meta(paths, slug)
-        meta_doc.setdefault("artifacts", {}).setdefault("analysis.wavelet_modwt_j5_sym4", {})[
+        meta_doc.setdefault("artifacts", {}).setdefault("analysis.wavelet_modwt", {})[
             "last_updated"
         ] = utcnow_iso()
         write_meta(paths, slug, meta_doc)

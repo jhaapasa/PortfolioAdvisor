@@ -70,6 +70,7 @@ class Settings(BaseSettings):
 
     # Optional analysis feature flags
     wavelet: bool = Field(default=False, alias="WAVELET")
+    wavelet_level: int = Field(default=5, alias="WAVELET_LEVEL")
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -97,3 +98,11 @@ class Settings(BaseSettings):
         if not self.portfolio_dir:
             self.portfolio_dir = os.path.join(self.output_dir, "portfolio")
         os.makedirs(self.portfolio_dir, exist_ok=True)
+
+    @field_validator("wavelet_level")
+    @classmethod
+    def _validate_wavelet_level(cls, value: int) -> int:
+        # Allow at least 1..8; can be extended later
+        if int(value) < 1 or int(value) > 8:
+            raise ValueError("WAVELET_LEVEL must be between 1 and 8")
+        return int(value)
