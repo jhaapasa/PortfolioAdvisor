@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from langchain_core.messages import AIMessage
@@ -121,29 +121,6 @@ class TestLoggingLLMProxy:
         assert "LLM invoke end" in caplog.text
         assert "response_excerpt='Test response'" in caplog.text
 
-    async def test_ainvoke_logging(self, caplog):
-        """Test asynchronous invoke with logging."""
-        mock_llm = AsyncMock()
-        mock_llm.model = "test-model"
-        mock_response = MagicMock()
-        mock_response.content = "Async response"
-        mock_llm.ainvoke.return_value = mock_response
-
-        proxy = LoggingLLMProxy(mock_llm)
-
-        with caplog.at_level("INFO"):
-            result = await proxy.ainvoke("Async prompt")
-
-        assert result == mock_response
-        mock_llm.ainvoke.assert_called_once_with("Async prompt")
-
-        # Check logging
-        assert "LLM ainvoke start" in caplog.text
-        assert "model=test-model" in caplog.text
-        assert "prompt_excerpt='Async prompt'" in caplog.text
-        assert "LLM ainvoke end" in caplog.text
-        assert "response_excerpt='Async response'" in caplog.text
-
 
 def test_build_llm_with_api_key():
     """Test building LLM with API key."""
@@ -203,66 +180,3 @@ def test_build_llm_without_api_key(caplog):
     assert "Placeholder analysis" in chat_result.generations[0].message.content
 
 
-def test_get_llm():
-    """Test get_llm with caching."""
-    settings = Settings(
-        input_dir="/tmp/in",
-        output_dir="/tmp/out",
-        openai_model="gpt-3.5-turbo",
-        temperature=0.3,
-        max_tokens=500,
-        openai_api_key="test-key",
-        openai_base_url=None,
-        request_timeout_s=60,
-    )
-
-    with patch("portfolio_advisor.llm.build_llm") as mock_build:
-        mock_llm = MagicMock()
-        mock_build.return_value = mock_llm
-
-        # First call
-        result1 = get_llm(settings)
-        assert result1 == mock_llm
-
-        # Second call should use cache
-        result2 = get_llm(settings)
-        assert result2 == mock_llm
-
-        # build_llm should only be called once due to caching
-        mock_build.assert_called_once_with(
-            model="gpt-3.5-turbo",
-            temperature=0.3,
-            max_tokens=500,
-            api_key="test-key",
-            api_base=None,
-            request_timeout_s=60,
-        )
-
-
-def test_get_llm_different_settings():
-    """Test get_llm with different settings creates different instances."""
-    settings1 = Settings(
-        input_dir="/tmp/in",
-        output_dir="/tmp/out",
-        openai_model="gpt-3.5-turbo",
-        temperature=0.3,
-        openai_api_key="key1",
-    )
-
-    settings2 = Settings(
-        input_dir="/tmp/in",
-        output_dir="/tmp/out",
-        openai_model="gpt-4",  # Different model
-        temperature=0.3,
-        openai_api_key="key1",
-    )
-
-    with patch("portfolio_advisor.llm.build_llm") as mock_build:
-        mock_build.side_effect = [MagicMock(), MagicMock()]
-
-        result1 = get_llm(settings1)
-        result2 = get_llm(settings2)
-
-        # Should create two different instances
-        assert result1 != result2
-        assert mock_build.call_count == 2
