@@ -26,6 +26,7 @@ from ..stocks.db import (
     write_meta,
     write_primary_ohlc,
 )
+from ..stocks.news import StockNewsService
 from ..stocks.plotting import (
     plot_wavelet_variance_spectrum,
     render_candlestick_ohlcv_1y,
@@ -181,6 +182,25 @@ def _fetch_primary_node(state: StockState) -> dict:
             len(merged.get("data", [])),
             (merged.get("coverage") or {}).get("end_date"),
         )
+
+        # Fetch news if enabled
+        fetch_news = getattr(settings, "fetch_news", True)
+        if fetch_news and ticker:
+            try:
+                with StockNewsService(paths, client) as news_service:
+                    news_stats = news_service.update_ticker_news(
+                        ticker_slug=slug, ticker_symbol=ticker, days_back=7
+                    )
+                    _logger.info(
+                        "stocks.fetch_primary: slug=%s news update stats=%s",
+                        slug,
+                        news_stats,
+                    )
+            except Exception:
+                _logger.warning(
+                    "stocks.fetch_primary: news fetching failed for %s", ticker, exc_info=True
+                )
+
         return {}
 
 

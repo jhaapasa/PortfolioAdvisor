@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from collections.abc import Iterable
 from pathlib import Path
+from unittest.mock import patch
 
 from portfolio_advisor.cli import main
 
@@ -233,3 +234,73 @@ def test_cli_missing_input_dir(tmp_path: Path, capsys):
     assert rc == 1
     err = capsys.readouterr().err
     assert "Error:" in err
+
+
+def test_cli_stock_mode_fetch_news_flag(tmp_path: Path, capsys, monkeypatch):
+    """Test that --fetch-news and --no-fetch-news flags work correctly."""
+    input_dir = tmp_path / "in"
+    output_dir = tmp_path / "out"
+    input_dir.mkdir()
+    output_dir.mkdir()
+    (input_dir / "positions.csv").write_text("symbol,shares\nAAPL,10\n", encoding="utf-8")
+
+    captured_settings: dict[str, object | None] = {"settings": None}
+
+    def _fake_update(settings, instrument, requested_artifacts=None):  # noqa: ANN001
+        captured_settings["settings"] = settings
+
+    monkeypatch.setattr("portfolio_advisor.cli.update_instrument", _fake_update)
+    monkeypatch.setenv("POLYGON_API_KEY", "test_key")
+
+    # Test with --fetch-news (should be True)
+    rc = main(
+        [
+            "--mode",
+            "stock",
+            "--ticker",
+            "AAPL",
+            "--input-dir",
+            str(input_dir),
+            "--output-dir",
+            str(output_dir),
+            "--fetch-news",
+        ]
+    )
+    assert rc == 0
+    assert captured_settings["settings"] is not None
+    assert captured_settings["settings"].fetch_news is True
+
+    # Test with --no-fetch-news (should be False)
+    rc = main(
+        [
+            "--mode",
+            "stock",
+            "--ticker",
+            "AAPL",
+            "--input-dir",
+            str(input_dir),
+            "--output-dir",
+            str(output_dir),
+            "--no-fetch-news",
+        ]
+    )
+    assert rc == 0
+    assert captured_settings["settings"] is not None
+    assert captured_settings["settings"].fetch_news is False
+
+    # Test default (should be True based on Settings default)
+    rc = main(
+        [
+            "--mode",
+            "stock",
+            "--ticker",
+            "AAPL",
+            "--input-dir",
+            str(input_dir),
+            "--output-dir",
+            str(output_dir),
+        ]
+    )
+    assert rc == 0
+    assert captured_settings["settings"] is not None
+    assert captured_settings["settings"].fetch_news is True

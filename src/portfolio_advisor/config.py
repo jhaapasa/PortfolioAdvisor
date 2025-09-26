@@ -71,6 +71,7 @@ class Settings(BaseSettings):
     # Optional analysis feature flags
     wavelet: bool = Field(default=False, alias="WAVELET")
     wavelet_level: int = Field(default=5, alias="WAVELET_LEVEL")
+    fetch_news: bool = Field(default=True, alias="FETCH_NEWS")
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -43,6 +43,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         help="Wavelet decomposition level J (1-8). Implies --wavelet when provided.",
     )
+    p.add_argument(
+        "--fetch-news/--no-fetch-news",
+        dest="fetch_news",
+        default=None,
+        action=argparse.BooleanOptionalAction,
+        help="Fetch news articles when updating stock data (default: True)",
+    )
 
     # Env overrides
     p.add_argument("--openai-api-key")
