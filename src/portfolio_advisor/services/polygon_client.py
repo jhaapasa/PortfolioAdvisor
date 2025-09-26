@@ -23,6 +23,7 @@ class PolygonClient:
         self._timeout_s = timeout_s
         self._trace = trace
         self._client = None  # created on first use
+        self._closed = False
 
     # Internal -----------------------------------------------------------------
     def _ensure_client(self) -> Any:
@@ -42,6 +43,34 @@ class PolygonClient:
         # variables in the upstream client; we keep them here for future customization.
         self._client = RESTClient(api_key=self._api_key, trace=self._trace)
         return self._client
+
+    # Lifecycle ----------------------------------------------------------------
+    def close(self) -> None:
+        """Close underlying HTTP resources if supported by the client.
+
+        Safe to call multiple times.
+        """
+        if self._closed:
+            return
+        client = self._client
+        self._closed = True
+        if client is None:
+            return
+        try:
+            # polygon RESTClient may expose close() depending on version
+            close = getattr(client, "close", None)
+            if callable(close):
+                close()
+        except Exception:
+            # Best-effort cleanup
+            pass
+
+    def __enter__(self) -> PolygonClient:
+        self._ensure_client()
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:  # noqa: D401 (concise)
+        self.close()
 
     # Public API ----------------------------------------------------------------
     def get_ticker_details(self, ticker: str) -> dict[str, Any]:

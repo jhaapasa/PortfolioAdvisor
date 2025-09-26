@@ -7,7 +7,8 @@ alwaysApply: true
 These repository-wide rules are always included. If a rule conflicts with file-specific guidance, prefer the file-specific guidance.
 
 ## Priorities
-- Favor clarity, correctness, and maintainability.
+- Apply the DRY principle - do not repeat yourself in code.
+- Produce professional, organized and maintainable code.
 - Make incremental, self-contained edits; avoid large refactors unless requested.
 - Do not introduce build, type, formatting or linter errors.
 
@@ -41,9 +42,8 @@ These repository-wide rules are always included. If a rule conflicts with file-s
 ## Testing and Quality
 - Add/update tests when changing behavior.
 - Keep tests deterministic and fast.
-- Run linters/formatters if configured; resolve violations before completion.
-- CI must run: lint, format check, tests, and coverage gate (80% or more).
-- If using type hints, run mypy in CI; do not ignore type errors without justification.
+- Keep tests isolated from environment variables.
+- Run scripts/lint, scripts/format and scripts/test always before committing. If errors are found, fix them, and start over - run these scripts again until no errors are found.
 
 ## Security
 - Never commit secrets, tokens, or credentials.
@@ -76,7 +76,7 @@ These repository-wide rules are always included. If a rule conflicts with file-s
 - Long-running commands should run in the background.
 - Parallelize read-only discovery (searches/reads) when independent; limit to 3–5 concurrent calls.
 - Prefer semantic code search for discovery; use exact search for symbols.
-- After substantive edits, run format/lint and tests; fix failures before reporting completion.
+- After substantive edits, run scripts/format, scripts/lint and scripts/test; fix failures before reporting completion.
 - Avoid posting long code in chat unless requested; make edits in files instead.
 - Call out any breaking changes explicitly.
 

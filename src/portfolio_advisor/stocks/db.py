@@ -32,11 +32,26 @@ class StockPaths:
     def analysis_sma_json(self, ticker: str) -> Path:
         return self.ticker_dir(ticker) / "analysis" / "sma_20_50_100_200.json"
 
+    def analysis_wavelet_coeffs_json(self, ticker: str) -> Path:
+        return self.ticker_dir(ticker) / "analysis" / "wavelet_coefficients_logreturns_sym4.json"
+
+    def analysis_wavelet_hist_json(self, ticker: str) -> Path:
+        return self.ticker_dir(ticker) / "analysis" / "volatility_histogram.json"
+
+    def analysis_wavelet_coeffs_logprice_json(self, ticker: str) -> Path:
+        return self.ticker_dir(ticker) / "analysis" / "wavelet_coefficients_logprice_sym4.json"
+
+    def analysis_wavelet_reconstructed_prices_json(self, ticker: str) -> Path:
+        return self.ticker_dir(ticker) / "analysis" / "wavelet_reconstructed_prices.json"
+
     def report_dir(self, ticker: str) -> Path:
         return self.ticker_dir(ticker) / "report"
 
     def report_candle_1y_png(self, ticker: str) -> Path:
         return self.report_dir(ticker) / "candle_ohlcv_1y.png"
+
+    def report_candle_2y_wavelet_trends_png(self, ticker: str) -> Path:
+        return self.report_dir(ticker) / "candle_ohlcv_2y_wavelet_trends.png"
 
     def lock_dir(self, ticker: str) -> Path:
         return self.ticker_dir(ticker) / ".lock"

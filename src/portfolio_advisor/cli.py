@@ -29,6 +29,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument("--ticker", help="Single stock ticker for --mode stock")
     p.add_argument("--instrument-id", help="Canonical instrument_id for --mode stock")
+    p.add_argument(
+        "--wavelet",
+        action="store_true",
+        help=(
+            "Compute MODWT(SWT) Sym4 wavelet analysis. "
+            "Use --wavelet-level to set decomposition level (default 5)."
+        ),
+    )
+    p.add_argument(
+        "-J",
+        "--wavelet-level",
+        type=int,
+        help="Wavelet decomposition level J (1-8). Implies --wavelet when provided.",
+    )
 
     # Env overrides
     p.add_argument("--openai-api-key")
@@ -56,6 +70,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show LangGraph agent progress messages",
     )
     p.add_argument(
+        "--log-libraries",
+        action="store_true",
+        help=(
+            "Allow library logs (httpx, urllib3, openai, langchain, langgraph) "
+            "at configured level"
+        ),
+    )
+    p.add_argument(
         "--skip-llm-cache",
         action="store_true",
         help="Force LLM calls to bypass cache lookup but write results to cache",
@@ -73,13 +95,29 @@ def main(argv: list[str] | None = None) -> int:
     mode = overrides.pop("mode", "portfolio")
     ticker = overrides.pop("ticker", None)
     instrument_id = overrides.pop("instrument_id", None)
+    # If user provided a wavelet level, ensure wavelet analysis is enabled
+    if "wavelet_level" in overrides:
+        overrides["wavelet"] = True
     if mode == "portfolio":
         try:
+            # Ensure wavelet flag is forwarded to Settings via overrides
             output_path = analyze_portfolio(input_dir=input_dir, output_dir=output_dir, **overrides)
         except Exception as exc:
             print(f"Error: {exc}", file=sys.stderr)
+            try:
+                import logging as _logging
+
+                _logging.shutdown()
+            except Exception:
+                pass
             return 1
         print(output_path)
+        try:
+            import logging as _logging
+
+            _logging.shutdown()
+        except Exception:
+            pass
         return 0
     # mode == stock
     if not (ticker or instrument_id):
@@ -94,9 +132,36 @@ def main(argv: list[str] | None = None) -> int:
             fmt=settings.log_format,
             verbose=bool(settings.verbose),
             agent_progress=bool(settings.agent_progress),
+            log_libraries=bool(getattr(settings, "log_libraries", False)),
         )
-        # Build instrument with a safe primary_ticker fallback from instrument_id when missing
-        iid = instrument_id or (f"cid:stocks:us:composite:{ticker}" if ticker else None)
+        # Prefer existing instrument_id/slug if a ticker dir already exists for this symbol
+        iid = instrument_id
+        if not iid and ticker:
+            try:
+                from .stocks.db import StockPaths
+
+                paths = StockPaths(root=(Path(settings.output_dir) / "stocks"))
+                tickers_root = paths.root / "tickers"
+                if tickers_root.exists():
+                    for candidate in tickers_root.iterdir():
+                        if not candidate.is_dir():
+                            continue
+                        meta_path = candidate / "meta.json"
+                        if not meta_path.exists():
+                            continue
+                        import json as _json
+
+                        with meta_path.open("r", encoding="utf-8") as fh:
+                            meta = _json.load(fh) or {}
+                        if str(meta.get("primary_ticker") or "").upper() == str(ticker).upper():
+                            cand_iid = meta.get("instrument_id")
+                            if cand_iid:
+                                iid = cand_iid
+                                break
+            except Exception:
+                iid = None
+        # Fallback to composite if still unknown
+        iid = iid or (f"cid:stocks:us:composite:{ticker}" if ticker else None)
         symbol = None
         if iid and not ticker:
             try:
@@ -107,9 +172,25 @@ def main(argv: list[str] | None = None) -> int:
             "instrument_id": iid,
             "primary_ticker": ticker or symbol,
         }
-        update_instrument(settings, instrument)
+        requested = None
+        if bool(overrides.get("wavelet")):
+            # Include standard analysis artifacts plus wavelet output
+            requested = [
+                "primary.ohlc_daily",
+                "analysis.returns",
+                "analysis.volatility",
+                "analysis.sma_20_50_100_200",
+                "analysis.wavelet_modwt_j5_sym4",
+            ]
+        update_instrument(settings, instrument, requested_artifacts=requested)
     except Exception as exc:  # pragma: no cover - network/provider specific
         print(f"Error: {exc}", file=sys.stderr)
+        try:
+            import logging as _logging
+
+            _logging.shutdown()
+        except Exception:
+            pass
         return 1
     # Print the ticker directory path as output
     from .utils.slug import instrument_id_to_slug
@@ -117,6 +198,12 @@ def main(argv: list[str] | None = None) -> int:
     slug = instrument_id_to_slug(instrument.get("instrument_id"))
     ticker_dir = Path(output_dir) / "stocks" / "tickers" / slug
     print(str(ticker_dir))
+    try:
+        import logging as _logging
+
+        _logging.shutdown()
+    except Exception:
+        pass
     return 0
 
 

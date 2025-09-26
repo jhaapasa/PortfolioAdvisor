@@ -18,6 +18,7 @@ from ..stocks.analysis import (
 from ..stocks.db import (
     StockPaths,
     append_ohlc_rows,
+    compute_last_complete_trading_day,
     ensure_ticker_scaffold,
     read_meta,
     read_primary_ohlc,
@@ -25,7 +26,21 @@ from ..stocks.db import (
     write_meta,
     write_primary_ohlc,
 )
-from ..stocks.plotting import render_candlestick_ohlcv_1y
+from ..stocks.plotting import (
+    plot_wavelet_variance_spectrum,
+    render_candlestick_ohlcv_1y,
+    render_candlestick_ohlcv_2y_wavelet_trends,
+)
+from ..stocks.wavelet import (
+    compute_histograms,
+    compute_modwt_logprice,
+    compute_modwt_logreturns,
+    compute_variance_spectrum,
+    reconstruct_logprice_series,
+    to_coefficients_json,
+    to_reconstructed_prices_json,
+    to_volatility_histogram_json,
+)
 from ..utils.slug import instrument_id_to_slug
 
 
@@ -88,6 +103,14 @@ def _check_db_state_node(state: StockState) -> dict:
     for art in ("analysis.returns", "analysis.volatility", "analysis.sma_20_50_100_200"):
         if art in requested:
             updates.append(art)
+    # Allow wavelet analysis when requested via settings flag, wavelet level, or explicit request
+    want_wavelet = (
+        bool(getattr(settings, "wavelet", False))
+        or bool(getattr(settings, "wavelet_level", 0))
+        or ("analysis.wavelet_modwt" in requested)
+    )
+    if want_wavelet:
+        updates.append("analysis.wavelet_modwt")
 
     _logger.info(
         "stocks.check_db_state: slug=%s requested=%s coverage_end=%s updates=%s",
@@ -113,45 +136,50 @@ def _fetch_primary_node(state: StockState) -> dict:
     slug = state.get("_slug") or instrument_id_to_slug(iid)
     paths = state.get("_paths") or StockPaths(root=(Path(settings.output_dir) / "stocks"))
 
-    client = PolygonClient(
+    # Ensure HTTP resources are released promptly by using context manager
+    with PolygonClient(
         api_key=settings.polygon_api_key,
         trace=settings.verbose,
         timeout_s=settings.polygon_timeout_s,
-    )
+    ) as client:
+        # Determine date range: fetch full history if none, else from last coverage end + 1 day
+        current = read_primary_ohlc(paths, slug)
+        start_date = current.get("coverage", {}).get("end_date")
+        if start_date:
+            # next day after end_date
+            start = str(dt.datetime.strptime(start_date, "%Y-%m-%d").date() + dt.timedelta(days=1))
+        else:
+            # default to a reasonable backfill horizon (5y) to avoid huge first-run fetches
+            start = (dt.date.today() - dt.timedelta(days=5 * 365)).isoformat()
+        # Use last complete trading day as end to avoid requesting intraday/unsupported ranges
+        end = compute_last_complete_trading_day()
 
-    # Determine date range: fetch full history if none, else from last coverage end + 1 day
-    current = read_primary_ohlc(paths, slug)
-    start_date = current.get("coverage", {}).get("end_date")
-    if start_date:
-        # next day after end_date
-        start = str(dt.datetime.strptime(start_date, "%Y-%m-%d").date() + dt.timedelta(days=1))
-    else:
-        # default to a reasonable backfill horizon (5y) to avoid huge first-run fetches
-        start = (dt.date.today() - dt.timedelta(days=5 * 365)).isoformat()
-    today = dt.datetime.now(dt.UTC).date().isoformat()
-
-    _logger.info(
-        "stocks.fetch_primary: slug=%s ticker=%s range=%s..%s",
-        slug,
-        ticker,
-        start,
-        today,
-    )
-    new_rows = list(client.list_aggs_daily(ticker=ticker, from_date=start, to_date=today))
-    if new_rows:
-        merged = append_ohlc_rows(current, new_rows)
-    else:
-        merged = current
-    merged["instrument_id"] = iid
-    merged["primary_ticker"] = ticker
-    write_primary_ohlc(paths, slug, merged)
-    _logger.info(
-        "stocks.fetch_primary: slug=%s wrote ohlc rows=%d coverage_end=%s",
-        slug,
-        len(merged.get("data", [])),
-        (merged.get("coverage") or {}).get("end_date"),
-    )
-    return {}
+        _logger.info(
+            "stocks.fetch_primary: slug=%s ticker=%s range=%s..%s",
+            slug,
+            ticker,
+            start,
+            end,
+        )
+        # If start is after end, nothing to fetch
+        if start > end:
+            new_rows = []
+        else:
+            new_rows = list(client.list_aggs_daily(ticker=ticker, from_date=start, to_date=end))
+        if new_rows:
+            merged = append_ohlc_rows(current, new_rows)
+        else:
+            merged = current
+        merged["instrument_id"] = iid
+        merged["primary_ticker"] = ticker
+        write_primary_ohlc(paths, slug, merged)
+        _logger.info(
+            "stocks.fetch_primary: slug=%s wrote ohlc rows=%d coverage_end=%s",
+            slug,
+            len(merged.get("data", [])),
+            (merged.get("coverage") or {}).get("end_date"),
+        )
+        return {}
 
 
 def _compute_returns_node(state: StockState) -> dict:
@@ -250,6 +278,147 @@ def _render_report_node(state: StockState) -> dict:
             _logger.info("stocks.render_report: wrote %s", written)
     except Exception:
         _logger.warning("stocks.render_report: rendering failed", exc_info=True)
+
+    # Render wavelet variance spectrum bar chart when histogram exists
+    try:
+        hist_path = paths.analysis_wavelet_hist_json(slug)
+        if hist_path.exists():
+            import json as _json
+
+            with hist_path.open("r", encoding="utf-8") as fh:
+                hist_doc = _json.load(fh)
+            spectrum = hist_doc.get("variance_spectrum") or {}
+            per_level = spectrum.get("per_level") or {}
+            # Normalize to percentages
+            from ..stocks.wavelet import normalize_variance_spectrum
+
+            normalized = normalize_variance_spectrum(per_level)
+            title = "Wavelet Variance Spectrum (Normalized)"
+            as_of = (ohlc.get("coverage") or {}).get("end_date")
+            subtitle = f"{ohlc.get('primary_ticker') or ''} — as of {as_of}" if as_of else None
+            out = plot_wavelet_variance_spectrum(
+                ticker_dir, normalized, title=title, subtitle=subtitle
+            )
+            if out is not None:
+                _logger.info("stocks.render_report: wrote %s", out)
+    except Exception:
+        _logger.warning("stocks.render_report: wavelet spectrum rendering failed", exc_info=True)
+
+    # Render 2Y candlestick with wavelet trend overlays (if reconstructions exist)
+    try:
+        import json as _json
+
+        recon_doc = None
+        recon_path = paths.analysis_wavelet_reconstructed_prices_json(slug)
+        if recon_path.exists():
+            with recon_path.open("r", encoding="utf-8") as fh:
+                recon_doc = _json.load(fh)
+        out2 = render_candlestick_ohlcv_2y_wavelet_trends(ticker_dir, ohlc, recon_doc)
+        if out2 is not None:
+            _logger.info("stocks.render_report: wrote %s", out2)
+    except Exception:
+        _logger.warning("stocks.render_report: 2y wavelet overlay rendering failed", exc_info=True)
+    return {}
+
+
+def _compute_wavelet_node(state: StockState) -> dict:
+    settings: Settings = state["settings"]
+    instrument = state["instrument"]
+    slug = state.get("_slug") or instrument_id_to_slug(str(instrument.get("instrument_id")))
+    paths = state.get("_paths") or StockPaths(root=(Path(settings.output_dir) / "stocks"))
+    requested = set(state.get("requested_artifacts") or [])
+    if "analysis.wavelet_modwt" not in requested and not bool(getattr(settings, "wavelet", False)):
+        return {}
+    ohlc = read_primary_ohlc(paths, slug)
+    rows = ohlc.get("data", []) or []
+    dates = [r.get("date") for r in rows]
+    closes = [float(r.get("close", 0.0)) for r in rows]
+
+    # Compute SWT-based MODWT on full history, slice internally to last 2Y
+    try:
+        lvl = int(getattr(settings, "wavelet_level", 5))
+        result = compute_modwt_logreturns(dates=dates, closes=closes, level=lvl, wavelet="sym4")
+    except Exception:
+        # Best-effort; do not fail the whole pipeline
+        _logger.warning("stocks.wavelet: transform failed", exc_info=True)
+        return {}
+
+    # Baseline returns aligned to result.dates for energy check
+    import numpy as _np
+
+    def _compute_lr(_closes: list[float]) -> _np.ndarray:
+        arr = _np.asarray(_closes, dtype=float)
+        lr = _np.diff(_np.log(arr))
+        return lr
+
+    all_lr = _compute_lr(closes)
+    # Align by dates: result dates correspond to closes[1:] dates; select the last target_len
+    target_len = len(result.dates)
+    baseline_returns = all_lr[-target_len:]
+    spectrum = compute_variance_spectrum(result, baseline_returns)
+    histos = compute_histograms(result.details, bins=50)
+
+    # Enrich metadata
+    analysis_start = result.dates[0] if result.dates else None
+    analysis_end = result.dates[-1] if result.dates else None
+    meta = {
+        **result.meta,
+        "ticker": ohlc.get("primary_ticker"),
+        "instrument_id": ohlc.get("instrument_id"),
+        "analysis_start": analysis_start,
+        "analysis_end": analysis_end,
+    }
+
+    # Write outputs
+    from ..stocks.db import _write_json, utcnow_iso  # reuse internal writer
+
+    coeffs_doc = to_coefficients_json(ticker=slug, result=result)
+    coeffs_doc["metadata"].update({"analysis_start": analysis_start, "analysis_end": analysis_end})
+    coeffs_doc["generated_at"] = utcnow_iso()
+    _write_json(paths.analysis_wavelet_coeffs_json(slug), coeffs_doc)
+
+    hist_doc = to_volatility_histogram_json(
+        ticker=slug, spectrum=spectrum, histos=histos, meta=meta
+    )
+    hist_doc["generated_at"] = utcnow_iso()
+    _write_json(paths.analysis_wavelet_hist_json(slug), hist_doc)
+
+    # Also compute SWT on log price and reconstruct price series
+    try:
+        lvl = int(getattr(settings, "wavelet_level", 5))
+        price_result = compute_modwt_logprice(dates=dates, closes=closes, level=lvl, wavelet="sym4")
+        price_coeffs_doc = to_coefficients_json(ticker=slug, result=price_result)
+        price_coeffs_doc["metadata"].update(
+            {"analysis_start": analysis_start, "analysis_end": analysis_end}
+        )
+        price_coeffs_doc["generated_at"] = utcnow_iso()
+        _write_json(paths.analysis_wavelet_coeffs_logprice_json(slug), price_coeffs_doc)
+
+        recon_dates, recon_map, recon_meta = reconstruct_logprice_series(
+            dates=dates,
+            closes=closes,
+            level=int(getattr(settings, "wavelet_level", 5)),
+            wavelet="sym4",
+            max_level=6,  # Use consistent max level for MRA consistency
+        )
+        recon_doc = to_reconstructed_prices_json(
+            ticker=slug, dates=recon_dates, recon=recon_map, meta=recon_meta
+        )
+        recon_doc["generated_at"] = utcnow_iso()
+        _write_json(paths.analysis_wavelet_reconstructed_prices_json(slug), recon_doc)
+    except Exception:
+        _logger.warning("stocks.wavelet: log-price transform/reconstruction failed", exc_info=True)
+
+    # Update artifacts in meta
+    try:
+        meta_doc = read_meta(paths, slug)
+        meta_doc.setdefault("artifacts", {}).setdefault("analysis.wavelet_modwt", {})[
+            "last_updated"
+        ] = utcnow_iso()
+        write_meta(paths, slug, meta_doc)
+    except Exception:
+        _logger.warning("stocks.wavelet: failed to update meta", exc_info=True)
+
     return {}
 
 
@@ -296,6 +465,7 @@ def build_stocks_graph() -> Any:
     graph.add_node("compute_returns", _compute_returns_node)
     graph.add_node("compute_volatility", _compute_volatility_node)
     graph.add_node("compute_sma", _compute_sma_node)
+    graph.add_node("compute_wavelet", _compute_wavelet_node)
     graph.add_node("commit_metadata", _commit_metadata_node)
     graph.add_node("render_report", _render_report_node)
 
@@ -312,7 +482,9 @@ def build_stocks_graph() -> Any:
     # Always compute analysis when requested
     graph.add_edge("compute_returns", "compute_volatility")
     graph.add_edge("compute_volatility", "compute_sma")
-    graph.add_edge("compute_sma", "render_report")
+    # Wavelet is optional; run after SMA (node will check requested_artifacts)
+    graph.add_edge("compute_sma", "compute_wavelet")
+    graph.add_edge("compute_wavelet", "render_report")
     graph.add_edge("render_report", "commit_metadata")
     graph.add_edge("commit_metadata", END)
     return graph.compile()
@@ -338,14 +510,23 @@ def update_all_for_instruments(
     import concurrent.futures as _futures
 
     max_workers = 4
+    # Explicitly request safe cancellation of pending futures on context exit
     with _futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
         futures = [
             executor.submit(update_instrument, settings, inst, requested_artifacts)
             for inst in instruments
         ]
-        for f in futures:
+        try:
+            for f in futures:
+                try:
+                    f.result()
+                except Exception:
+                    # Best-effort; errors are isolated per instrument, but log for visibility
+                    _logger.warning("stocks.update_all: instrument update failed", exc_info=True)
+        finally:
+            # Python 3.9+ ThreadPoolExecutor supports shutdown(cancel_futures=True)
             try:
-                f.result()
-            except Exception:
-                # Best-effort; errors are isolated per instrument, but log for visibility
-                _logger.warning("stocks.update_all: instrument update failed", exc_info=True)
+                executor.shutdown(wait=True, cancel_futures=True)  # type: ignore[arg-type]
+            except TypeError:
+                # Older versions without cancel_futures
+                executor.shutdown(wait=True)

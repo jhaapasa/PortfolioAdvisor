@@ -64,13 +64,19 @@ class Settings(BaseSettings):
     log_format: str = Field(default="plain", alias="LOG_FORMAT")
     verbose: bool = Field(default=False, alias="VERBOSE")
     agent_progress: bool = Field(default=False, alias="AGENT_PROGRESS")
+    log_libraries: bool = Field(default=False, alias="LOG_LIBRARIES")
     # Caching
     skip_llm_cache: bool = Field(default=False, alias="SKIP_LLM_CACHE")
+
+    # Optional analysis feature flags
+    wavelet: bool = Field(default=False, alias="WAVELET")
+    wavelet_level: int = Field(default=5, alias="WAVELET_LEVEL")
 
     model_config = SettingsConfigDict(
         env_file=".env",
         extra="ignore",
         json_loads=_permissive_json_loads,
+        populate_by_name=True,
     )
 
     @field_validator("input_dir", "output_dir")
@@ -92,3 +98,11 @@ class Settings(BaseSettings):
         if not self.portfolio_dir:
             self.portfolio_dir = os.path.join(self.output_dir, "portfolio")
         os.makedirs(self.portfolio_dir, exist_ok=True)
+
+    @field_validator("wavelet_level")
+    @classmethod
+    def _validate_wavelet_level(cls, value: int) -> int:
+        # Allow at least 1..8; can be extended later
+        if int(value) < 1 or int(value) > 8:
+            raise ValueError("WAVELET_LEVEL must be between 1 and 8")
+        return int(value)
