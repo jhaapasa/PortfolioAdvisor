@@ -8,13 +8,11 @@ import pytest
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
-from portfolio_advisor.config import Settings
 from portfolio_advisor.llm import (
     LoggingLLMProxy,
     _approx_tokens,
     _excerpt,
     build_llm,
-    get_llm,
 )
 
 
