@@ -1,24 +1,11 @@
 from __future__ import annotations
 
 import json
-from typing import Any
 
 from portfolio_advisor.agents.parser import parse_one_node
 
 
-class DummyLLM:
-    def __init__(self, payload: dict[str, Any]):
-        self.payload = payload
-
-    def invoke(self, prompt: str):  # simple sync path used by parser
-        class R:
-            def __init__(self, content: str):
-                self.content = content
-
-        return R(json.dumps(self.payload))
-
-
-def test_parser_basic_concat(monkeypatch):
+def test_parser_basic_concat(monkeypatch, llm_stub_factory):
     # Two simple docs producing one holding each
     payloads = [
         {
@@ -55,7 +42,7 @@ def test_parser_basic_concat(monkeypatch):
     def fake_get_llm(_settings):
         idx = calls["i"]
         calls["i"] += 1
-        return DummyLLM(payloads[idx])
+        return llm_stub_factory(lambda _prompt, idx=idx: json.dumps(payloads[idx]))
 
     monkeypatch.setattr("portfolio_advisor.agents.parser.get_llm", fake_get_llm)
 
@@ -80,7 +67,7 @@ def test_parser_basic_concat(monkeypatch):
     assert "[none]" in baskets
 
 
-def test_parser_retry_fix(monkeypatch):
+def test_parser_retry_fix(monkeypatch, llm_stub_factory):
     # First response invalid; second response valid
     bad = "{"  # invalid JSON
     good = json.dumps(
@@ -93,21 +80,14 @@ def test_parser_retry_fix(monkeypatch):
         }
     )
 
-    class DummyLLM2:
-        def __init__(self):
-            self.calls = 0
-
-        def invoke(self, prompt: str):
-            self.calls += 1
-
-            class R:
-                def __init__(self, content: str):
-                    self.content = content
-
-            return R(bad if self.calls == 1 else good)
-
     def fake_get_llm(_settings):
-        return DummyLLM2()
+        state = {"calls": 0}
+
+        def handler(_prompt: str) -> str:
+            state["calls"] += 1
+            return bad if state["calls"] == 1 else good
+
+        return llm_stub_factory(handler)
 
     monkeypatch.setattr("portfolio_advisor.agents.parser.get_llm", fake_get_llm)
 

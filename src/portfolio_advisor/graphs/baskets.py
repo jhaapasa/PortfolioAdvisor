@@ -6,6 +6,7 @@ from typing import Any, TypedDict
 from langgraph.graph import END, StateGraph
 
 from ..config import Settings
+from ..stocks.analysis import compute_trailing_returns
 from ..utils.fs import utcnow_iso
 from ..utils.slug import instrument_id_to_slug
 
@@ -76,7 +77,6 @@ def _collect_inputs_node(state: BasketState) -> dict:
                 as_of = as_of or data.get("as_of")
         except Exception:  # pragma: no cover - best effort
             pass
-        # Fallback: derive d1/d5 from primary OHLC if needed
         if d1 is None or d5 is None:
             ohlc_path = base / slug / "primary" / "ohlc_daily.json"
             try:
@@ -85,22 +85,15 @@ def _collect_inputs_node(state: BasketState) -> dict:
 
                     with ohlc_path.open("r", encoding="utf-8") as fh:
                         ohlc = _json.load(fh)
-                    closes = [float(r.get("close", 0.0)) for r in ohlc.get("data", [])]
-                    as_of = as_of or (ohlc.get("coverage") or {}).get("end_date")
-
-                    def trailing(n: int) -> float | None:
-                        if len(closes) <= n:
-                            return None
-                        c0 = closes[-n - 1]
-                        ct = closes[-1]
-                        if c0 == 0:
-                            return None
-                        return (ct / c0) - 1.0
-
+                    computed = compute_trailing_returns(ohlc)
+                    windows = computed.get("windows", {}) or {}
                     if d1 is None:
-                        d1 = trailing(1)
+                        d1 = windows.get("d1")
                     if d5 is None:
-                        d5 = trailing(5)
+                        d5 = windows.get("d5")
+                    if as_of is None:
+                        cov_end = (ohlc.get("coverage") or {}).get("end_date")
+                        as_of = computed.get("as_of") or cov_end
             except Exception:  # pragma: no cover - best effort
                 pass
         # Only include row if we have at least one metric

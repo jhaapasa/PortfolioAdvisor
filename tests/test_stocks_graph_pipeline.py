@@ -6,7 +6,6 @@ from pathlib import Path
 
 from portfolio_advisor.config import Settings
 from portfolio_advisor.graphs.stocks import update_instrument
-from portfolio_advisor.services.polygon_client import PolygonClient
 
 
 def _ts_ms(yyyy_mm_dd: str) -> int:
@@ -14,7 +13,7 @@ def _ts_ms(yyyy_mm_dd: str) -> int:
     return int(dt.timestamp() * 1000)
 
 
-def test_update_ticker_pipeline_writes_all_artifacts(tmp_path, monkeypatch):
+def test_update_ticker_pipeline_writes_all_artifacts(tmp_path, polygon_stub):
     # Arrange: stub PolygonClient.list_aggs_daily to return a modest set of data
     # Provide normalized rows as returned by PolygonClient.list_aggs_daily
     # Generate ~260 trading-like days for report rendering
@@ -46,12 +45,7 @@ def test_update_ticker_pipeline_writes_all_artifacts(tmp_path, monkeypatch):
             added += 1
         d += timedelta(days=1)
 
-    def fake_list_aggs_daily(
-        self, ticker, from_date, to_date, adjusted=True, limit=50000
-    ):  # noqa: ARG001
-        return iter(bars)
-
-    monkeypatch.setattr(PolygonClient, "list_aggs_daily", fake_list_aggs_daily)
+    polygon_stub(bars)
 
     out_dir = tmp_path / "out"
     inp_dir = tmp_path / "in"
