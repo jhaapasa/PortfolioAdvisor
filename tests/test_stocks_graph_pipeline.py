@@ -18,10 +18,11 @@ def test_update_ticker_pipeline_writes_all_artifacts(tmp_path, monkeypatch):
     # Arrange: stub PolygonClient.list_aggs_daily to return a modest set of data
     # Provide normalized rows as returned by PolygonClient.list_aggs_daily
     # Generate ~260 trading-like days for report rendering
+    # Use a date range that's definitely in the past to ensure primary fetch is triggered
     bars = []
     from datetime import date, timedelta
 
-    d = date(2024, 1, 1)
+    d = date(2023, 1, 1)
     price = 100.0
     added = 0
     while added < 260:
