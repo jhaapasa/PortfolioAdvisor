@@ -6,7 +6,7 @@ from pathlib import Path
 from portfolio_advisor.analyze import analyze_portfolio
 
 
-def test_end_to_end_summary(tmp_path: Path, monkeypatch):
+def test_end_to_end_summary(tmp_path: Path, monkeypatch, llm_stub_factory):
     in_dir = tmp_path / "in"
     out_dir = tmp_path / "out"
     in_dir.mkdir()
@@ -35,24 +35,15 @@ def test_end_to_end_summary(tmp_path: Path, monkeypatch):
         "errors": [],
     }
 
-    class DummyLLM:
-        def invoke(self, prompt: str):
+    def handler(prompt: str) -> str:
+        if "JSON Schema for output" in prompt:
+            return json.dumps(payload)
+        return "Summary of 2 holdings across accounts and baskets."
 
-            class R:
-                def __init__(self, content: str):
-                    self.content = content
+    stub = llm_stub_factory(handler)
+    monkeypatch.setattr("portfolio_advisor.agents.parser.get_llm", lambda _settings: stub)
+    monkeypatch.setattr("portfolio_advisor.agents.analyst.get_llm", lambda _settings: stub)
 
-            # Parser stage expects JSON; analyst expects free text.
-            # Detect via presence of the JSON Schema marker.
-            if "JSON Schema for output" in prompt:
-                return R(json.dumps(payload))
-            return R("Summary of 2 holdings across accounts and baskets.")
-
-    def fake_get_llm(_settings):
-        return DummyLLM()
-
-    monkeypatch.setattr("portfolio_advisor.agents.parser.get_llm", fake_get_llm)
-    monkeypatch.setattr("portfolio_advisor.agents.analyst.get_llm", fake_get_llm)
     # Stub resolver to return canonical holdings deterministically (no network/env deps)
     from portfolio_advisor.models.canonical import CanonicalHolding
 

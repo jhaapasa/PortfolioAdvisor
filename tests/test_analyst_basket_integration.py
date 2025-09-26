@@ -3,19 +3,14 @@ from __future__ import annotations
 from portfolio_advisor.agents.analyst import analyst_node
 
 
-def test_analyst_includes_basket_highlights(monkeypatch):
-    class DummyLLM:
-        def invoke(self, prompt: str):
-            class R:
-                def __init__(self, content: str):
-                    self.content = content
+def test_analyst_includes_basket_highlights(monkeypatch, llm_stub_factory):
+    def _handler(prompt: str) -> str:
+        return prompt
 
-            return R(prompt)
-
-    def fake_get_llm(_settings):
-        return DummyLLM()
-
-    monkeypatch.setattr("portfolio_advisor.agents.analyst.get_llm", fake_get_llm)
+    monkeypatch.setattr(
+        "portfolio_advisor.agents.analyst.get_llm",
+        lambda _settings: llm_stub_factory(_handler),
+    )
 
     state = {
         "settings": object(),

@@ -6,16 +6,13 @@ alwaysApply: true
 
 These repository-wide rules are always included. If a rule conflicts with file-specific guidance, prefer the file-specific guidance.
 
-## Priorities
-- Apply the DRY principle - do not repeat yourself in code.
-- Produce professional, organized and maintainable code.
-- Make incremental, self-contained edits; avoid large refactors unless requested.
-- Do not introduce build, type, formatting or linter errors.
-
-## Design Principles
-- Be opinionated when it leads to simpler designs.
-- We are in early development - move fast. It's ok to break backwards compatibility for now.
-- Avoid introducing parameters and options if possible, and prefer simple designs that do the main thing well
+## Design Principles (In Priority Order From Highest to Lowest)
+1. Use the DRY principle - Don't Repeat Yourself in code.
+2. Produce professional, structured and maintainable code.
+3. Maintain test coverage above 80%
+4. Be opinionated when it leads to simpler designs. Avoid introducing parameters and alternate code paths if possible.
+5. Refactoring efforts should focus on maintainability and minimizing redundancy on the feature being worked on. Treat changes touching multiple modules or public APIs as "large refactors" — pause and confirm before proceeding.
+6. We are in early development so it's ok to break backwards compatibility to keep code simpler.
 
 ## Communication
 - Be concise and skimmable; use short sections and bullet points.
@@ -42,8 +39,15 @@ These repository-wide rules are always included. If a rule conflicts with file-s
 ## Testing and Quality
 - Add/update tests when changing behavior.
 - Keep tests deterministic and fast.
-- Keep tests isolated from environment variables.
-- Run scripts/lint, scripts/format and scripts/test always before committing. If errors are found, fix them, and start over - run these scripts again until no errors are found.
+- Avoid test dependency on environmental variables.
+- Avoid test dependency on online services - mock all required services instead.
+
+## Before Commit Checklist
+Run these in order (in the repo root) before every commit or force-push:
+- `./scripts/format`
+- `./scripts/lint`
+- `source .venv/bin/activate && pytest -q --cov=src/portfolio_advisor --cov-report=term-missing`
+- If any command fails, capture the exact output and resolve before continuing.
 
 ## Security
 - Never commit secrets, tokens, or credentials.
@@ -64,7 +68,8 @@ These repository-wide rules are always included. If a rule conflicts with file-s
 - Document new interfaces or protocols briefly.
 
 ## Documentation
-- Update README or inline docs when behavior or setup changes.
+- Update README or inline docs when CLI parameters / ENV Variables change, or when public interfaces change.
+- Update function/class docstrings when behaviour or return values change.
 - Include usage examples for new tools or scripts.
 
 ## Agent Execution (Cursor)
@@ -76,9 +81,10 @@ These repository-wide rules are always included. If a rule conflicts with file-s
 - Long-running commands should run in the background.
 - Parallelize read-only discovery (searches/reads) when independent; limit to 3–5 concurrent calls.
 - Prefer semantic code search for discovery; use exact search for symbols.
-- After substantive edits, run scripts/format, scripts/lint and scripts/test; fix failures before reporting completion.
+- After substantive edits, run format/lint and tests; fix failures before reporting completion.
 - Avoid posting long code in chat unless requested; make edits in files instead.
 - Call out any breaking changes explicitly.
+- Surface TODOs via the `todo_write` tool during work, and mirror long-lived items in docs/TODO.md as a bulleted list.
 
 ## Repository Layout
 - `src/` for application code.

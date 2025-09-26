@@ -94,10 +94,12 @@ def _check_db_state_node(state: StockState) -> dict:
     ohlc = read_primary_ohlc(paths, slug)
     coverage_end = (ohlc.get("coverage") or {}).get("end_date")
     has_rows = bool(ohlc.get("data") or [])
-    today_utc = dt.datetime.now(dt.UTC).date().isoformat()
-    # On fresh start (no rows), or if coverage is behind today, fetch primary
-    if "primary.ohlc_daily" in requested and (not has_rows or coverage_end != today_utc):
-        updates.append("primary.ohlc_daily")
+    last_trading_day = compute_last_complete_trading_day()
+
+    if "primary.ohlc_daily" in requested:
+        needs_primary = not has_rows or coverage_end is None or coverage_end < last_trading_day
+        if needs_primary:
+            updates.append("primary.ohlc_daily")
     # Analysis artifacts depend on OHLC.
     # Even if primary is unchanged, allow recompute when requested.
     for art in ("analysis.returns", "analysis.volatility", "analysis.sma_20_50_100_200"):

@@ -3,30 +3,32 @@ from __future__ import annotations
 from portfolio_advisor.services.polygon_client import PolygonClient
 
 
-class DummyREST:
-    def list_aggs(self, ticker, multiplier, timespan, from_, to, adjusted, limit):  # noqa: ANN001
-        assert ticker == "AAPL"
-        assert multiplier == 1
-        assert timespan in ("day", getattr(type("T", (), {"DAY": "day"}), "DAY", "day"))
-        assert from_ == "2025-01-01"
-        assert to == "2025-01-05"
-        assert adjusted is True
-        assert limit == 50000
-        # two entries: one with short keys, one with verbose keys
-        yield {"t": 1735689600000, "o": 10, "h": 11, "l": 9, "c": 10.5, "v": 100, "vw": 10.2}
-        yield {
-            "timestamp": 1735948800000,
-            "open": 10.6,
-            "high": 11.2,
-            "low": 10.2,
-            "close": 11.0,
-            "volume": 110,
-            "vwap": None,
-        }
-
-
 def test_list_aggs_daily_normalizes_output(monkeypatch):
+    """Test that PolygonClient normalizes both short and long key formats."""
     pc = PolygonClient(api_key="x")
+
+    class DummyREST:
+        def list_aggs(
+            self, ticker, multiplier, timespan, from_, to, adjusted, limit
+        ):  # noqa: ANN001
+            assert ticker == "AAPL"
+            assert multiplier == 1
+            assert timespan in ("day", getattr(type("T", (), {"DAY": "day"}), "DAY", "day"))
+            assert from_ == "2025-01-01"
+            assert to == "2025-01-05"
+            assert adjusted is True
+            assert limit == 50000
+            # two entries: one with short keys, one with verbose keys
+            yield {"t": 1735689600000, "o": 10, "h": 11, "l": 9, "c": 10.5, "v": 100, "vw": 10.2}
+            yield {
+                "timestamp": 1735948800000,
+                "open": 10.6,
+                "high": 11.2,
+                "low": 10.2,
+                "close": 11.0,
+                "volume": 110,
+                "vwap": None,
+            }
 
     def fake_ensure(self):  # noqa: ANN001
         return DummyREST()
@@ -37,13 +39,47 @@ def test_list_aggs_daily_normalizes_output(monkeypatch):
 
     assert len(rows) == 2
     r0, r1 = rows
+    # Verify normalization works for both short and long keys
     assert r0["date"] == "2025-01-01"
     assert r0["open"] == 10.0 and r0["volume"] == 100 and r0["vwap"] == 10.2
     assert r1["date"] == "2025-01-04"
     assert r1["close"] == 11.0 and r1["vwap"] is None
 
 
+def test_list_aggs_daily_with_polygon_stub(polygon_stub):
+    """Test using the polygon_stub fixture for simpler test setup."""
+    pc = PolygonClient(api_key="x")
+    calls = polygon_stub(
+        [
+            {"t": 1735689600000, "o": 10, "h": 11, "l": 9, "c": 10.5, "v": 100, "vw": 10.2},
+            {
+                "timestamp": 1735948800000,
+                "open": 10.6,
+                "high": 11.2,
+                "low": 10.2,
+                "close": 11.0,
+                "volume": 110,
+                "vwap": None,
+            },
+        ]
+    )
+    rows = list(pc.list_aggs_daily("AAPL", from_date="2025-01-01", to_date="2025-01-05"))
+
+    assert len(rows) == 2
+    # The stub returns raw data without normalization
+    r0, r1 = rows
+    assert r0["t"] == 1735689600000
+    assert r0["o"] == 10 and r0["v"] == 100 and r0["vw"] == 10.2
+    assert r1["timestamp"] == 1735948800000
+    assert r1["close"] == 11.0 and r1["vwap"] is None
+    # Verify the function was called correctly
+    called = calls[0]
+    assert called.ticker == "AAPL"
+    assert called.limit == 50000
+
+
 def test_close_is_idempotent(monkeypatch):
+    """Test that close() can be called multiple times safely."""
     pc = PolygonClient(api_key="x")
 
     class Dummy:
@@ -72,6 +108,8 @@ def test_close_is_idempotent(monkeypatch):
 
 
 def test_get_ticker_details_handles_model_dump(monkeypatch):
+    """Test that get_ticker_details handles objects with model_dump method."""
+
     class DummyData:
         def __init__(self):
             self.model_dump_called = False
@@ -96,6 +134,8 @@ def test_get_ticker_details_handles_model_dump(monkeypatch):
 
 
 def test_list_tickers_normalizes_items(monkeypatch):
+    """Test that list_tickers handles both object and dict items."""
+
     class DummyItem:
         def __init__(self, ticker):
             self.ticker = ticker
