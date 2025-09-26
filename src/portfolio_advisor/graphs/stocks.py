@@ -101,6 +101,31 @@ def _check_db_state_node(state: StockState) -> dict:
         needs_primary = not has_rows or coverage_end is None or coverage_end < last_trading_day
         if needs_primary:
             updates.append("primary.ohlc_daily")
+    
+    # Check if news needs updating (independent of OHLC)
+    fetch_news = getattr(settings, "fetch_news", True)
+    if fetch_news and has_rows:  # Only fetch news if we have stock data
+        # Check if news index exists and when it was last updated
+        news_index_path = paths.news_index_json(slug)
+        needs_news_update = True
+        if news_index_path.exists():
+            try:
+                import json
+                with news_index_path.open("r") as f:
+                    news_index = json.load(f)
+                last_news_update = news_index.get("last_updated", "")
+                if last_news_update:
+                    # Only update if last update was more than 1 hour ago
+                    from datetime import datetime, timedelta, UTC
+                    last_update_time = datetime.fromisoformat(last_news_update.replace("Z", "+00:00"))
+                    if datetime.now(UTC) - last_update_time < timedelta(hours=1):
+                        needs_news_update = False
+            except Exception:
+                pass  # If anything fails, update news
+        
+        if needs_news_update:
+            updates.append("primary.news")
+    
     # Analysis artifacts depend on OHLC.
     # Even if primary is unchanged, allow recompute when requested.
     for art in ("analysis.returns", "analysis.volatility", "analysis.sma_20_50_100_200"):
@@ -116,11 +141,12 @@ def _check_db_state_node(state: StockState) -> dict:
         updates.append("analysis.wavelet_modwt")
 
     _logger.info(
-        "stocks.check_db_state: slug=%s requested=%s coverage_end=%s updates=%s",
+        "stocks.check_db_state: slug=%s requested=%s coverage_end=%s updates=%s fetch_news=%s",
         slug,
         ",".join(requested),
         coverage_end,
         ",".join(updates),
+        fetch_news,
     )
     return {"updates_needed": updates, "_slug": slug, "_paths": paths}
 
@@ -164,27 +190,38 @@ def _fetch_primary_node(state: StockState) -> dict:
             start,
             end,
         )
-        # If start is after end, nothing to fetch
-        if start > end:
-            new_rows = []
+        # Check if we need to fetch OHLC data
+        needs = state.get("updates_needed") or []
+        if "primary.ohlc_daily" in needs:
+            # If start is after end, nothing to fetch
+            if start > end:
+                new_rows = []
+            else:
+                new_rows = list(client.list_aggs_daily(ticker=ticker, from_date=start, to_date=end))
+            if new_rows:
+                merged = append_ohlc_rows(current, new_rows)
+            else:
+                merged = current
+            merged["instrument_id"] = iid
+            merged["primary_ticker"] = ticker
+            write_primary_ohlc(paths, slug, merged)
+            _logger.info(
+                "stocks.fetch_primary: slug=%s wrote ohlc rows=%d coverage_end=%s",
+                slug,
+                len(merged.get("data", [])),
+                (merged.get("coverage") or {}).get("end_date"),
+            )
         else:
-            new_rows = list(client.list_aggs_daily(ticker=ticker, from_date=start, to_date=end))
-        if new_rows:
-            merged = append_ohlc_rows(current, new_rows)
-        else:
+            # No OHLC update needed, just use current data
             merged = current
-        merged["instrument_id"] = iid
-        merged["primary_ticker"] = ticker
-        write_primary_ohlc(paths, slug, merged)
-        _logger.info(
-            "stocks.fetch_primary: slug=%s wrote ohlc rows=%d coverage_end=%s",
-            slug,
-            len(merged.get("data", [])),
-            (merged.get("coverage") or {}).get("end_date"),
-        )
 
         # Fetch news if enabled
         fetch_news = getattr(settings, "fetch_news", True)
+        _logger.info(
+            "stocks.fetch_primary: news fetching check - fetch_news=%s ticker=%s",
+            fetch_news,
+            ticker,
+        )
         if fetch_news and ticker:
             try:
                 with StockNewsService(paths, client) as news_service:
@@ -497,7 +534,8 @@ def build_stocks_graph() -> Any:
     # Conditionally run primary fetch using conditional edges
     def _route_after_check(state: StockState):
         needs = state.get("updates_needed") or []
-        return "fetch_primary" if "primary.ohlc_daily" in needs else "compute_returns"
+        # Go to fetch_primary if either OHLC or news needs updating
+        return "fetch_primary" if ("primary.ohlc_daily" in needs or "primary.news" in needs) else "compute_returns"
 
     graph.add_conditional_edges("check_db_state", _route_after_check)
     graph.add_edge("fetch_primary", "compute_returns")

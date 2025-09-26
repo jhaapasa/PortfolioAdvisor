@@ -95,7 +95,8 @@ class StockNewsService:
 
                 # Save article metadata
                 article_path = self.paths.news_article_json(ticker_slug, article_id)
-                article_data = article.copy()
+                # Ensure all nested objects are serializable
+                article_data = self._make_serializable(article)
 
                 # Try to download full article content
                 if article_url := article.get("article_url"):
@@ -164,3 +165,19 @@ class StockNewsService:
         except Exception as e:
             logger.warning(f"Failed to download article {article_id} from {url}: {e}")
             return None
+
+    def _make_serializable(self, obj: Any) -> Any:
+        """Convert object to JSON-serializable format."""
+        if isinstance(obj, dict):
+            return {k: self._make_serializable(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [self._make_serializable(item) for item in obj]
+        elif hasattr(obj, "__dict__"):
+            # Convert objects with __dict__ to dictionaries
+            return self._make_serializable(obj.__dict__)
+        elif hasattr(obj, "model_dump"):
+            # Handle pydantic-like objects
+            return obj.model_dump()
+        else:
+            # Return as-is for basic types (str, int, float, bool, None)
+            return obj
