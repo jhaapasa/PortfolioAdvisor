@@ -44,6 +44,43 @@ def test_end_to_end_summary(tmp_path: Path, monkeypatch, llm_stub_factory):
     monkeypatch.setattr("portfolio_advisor.agents.parser.get_llm", lambda _settings: stub)
     monkeypatch.setattr("portfolio_advisor.agents.analyst.get_llm", lambda _settings: stub)
 
+    # Stub resolver to return canonical holdings deterministically (no network/env deps)
+    from portfolio_advisor.models.canonical import CanonicalHolding
+
+    class _StubResolver:
+        def resolve_one(self, parsed: dict):  # noqa: ANN001
+            ticker = str(parsed.get("primary_ticker") or "AAPL")
+            iid = f"cid:stocks:us:composite:{ticker}"
+            return CanonicalHolding(
+                instrument_id=iid,
+                asset_class="stocks",
+                locale="us",
+                mic="composite",
+                primary_ticker=ticker,
+                symbol=ticker,
+                polygon_ticker=ticker,
+                company_name=str(parsed.get("name") or ticker),
+                currency=str(parsed.get("currency") or "USD"),
+                as_of=parsed.get("as_of"),
+                quantity=parsed.get("quantity"),
+                weight=parsed.get("weight"),
+                account=parsed.get("account"),
+                basket=parsed.get("basket"),
+                source_doc_id=parsed.get("source_doc_id"),
+                resolution_confidence=1.0,
+                resolution_notes="test_stub",
+                identifiers=None,
+            )
+
+    def _fake_build_resolver(_settings):  # noqa: ANN001
+        return _StubResolver()
+
+    monkeypatch.setattr("portfolio_advisor.agents.resolver._build_resolver", _fake_build_resolver)
+    # Avoid hitting stocks update pipeline/network in this end-to-end test
+    monkeypatch.setattr(
+        "portfolio_advisor.graph.update_all_for_instruments", lambda *_args, **_kwargs: None
+    )
+
     analyze_portfolio(input_dir=str(in_dir), output_dir=str(out_dir))
     content = (out_dir / "analysis.md").read_text(encoding="utf-8")
     assert "Summary of 2 holdings" in content
