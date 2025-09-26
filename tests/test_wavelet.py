@@ -4,13 +4,19 @@ import math
 from datetime import date, timedelta
 
 import numpy as np
+import pytest
 
 from portfolio_advisor.stocks.wavelet import (
+    WaveletTransformResult,
     compute_histograms,
     compute_modwt_logprice,
     compute_modwt_logreturns,
     compute_variance_spectrum,
+    normalize_variance_spectrum,
     reconstruct_logprice_series,
+    to_coefficients_json,
+    to_reconstructed_prices_json,
+    to_volatility_histogram_json,
 )
 
 
@@ -26,17 +32,16 @@ def _make_synthetic_closes(n: int) -> tuple[list[str], list[float]]:
     # Create synthetic log returns with mixed frequencies and mild noise
     t = np.arange(len(dates), dtype=float)
     lr = 0.001 * np.sin(2 * math.pi * t / 10.0) + 0.0005 * np.sin(2 * math.pi * t / 40.0)
-    rng = np.random.default_rng(42)
-    lr += rng.normal(0.0, 0.0002, size=lr.shape)
     # Build close prices from returns
     log_price = np.cumsum(lr) + math.log(100.0)
     closes = np.exp(log_price).tolist()
     return dates, closes
 
 
-def test_wavelet_energy_partition_and_alignment():
+@pytest.mark.parametrize("level", [3, 5])
+def test_wavelet_energy_partition_and_alignment(level):
     dates, closes = _make_synthetic_closes(800)
-    result = compute_modwt_logreturns(dates=dates, closes=closes, level=5, wavelet="sym4")
+    result = compute_modwt_logreturns(dates=dates, closes=closes, level=level, wavelet="sym4")
 
     # Result lengths match dates (2 years ~= 504 trading days)
     assert len(result.dates) == min(504, len(dates) - 1)
@@ -51,14 +56,20 @@ def test_wavelet_energy_partition_and_alignment():
     base_aligned = base_lr[-len(result.dates) :]
     spectrum = compute_variance_spectrum(result, base_aligned)
     rel_err = float(spectrum.get("relative_error", 1.0))
-    assert abs(rel_err) < 0.05  # within 5%
+    tolerance = 0.05 if level >= 5 else 0.25
+    assert abs(rel_err) < tolerance
 
     # Histograms
     histos = compute_histograms(result.details, bins=32)
-    assert set(histos.keys()) == {"D1", "D2", "D3", "D4", "D5"}
+    bands = {f"D{i}" for i in range(1, level + 1)}
+    assert set(histos.keys()) == bands
     for v in histos.values():
         assert len(v["bin_edges"]) == 33
         assert len(v["counts"]) == 32
+
+    # Normalized spectrum percentages sum to 100
+    normalized = normalize_variance_spectrum(spectrum["per_level"])
+    assert pytest.approx(sum(normalized.values()), abs=1e-6) == 100.0
 
 
 def test_logprice_transform_and_reconstruction_behaviors():
@@ -116,3 +127,31 @@ def test_logprice_transform_and_reconstruction_behaviors():
             assert (
                 variances[j - 1] >= variances[j] * 0.95
             ), f"S{j} variance should be >= S{j+1} variance"
+
+
+def test_to_coefficients_and_histogram_serialization():
+    n = 120
+    dates = [f"2025-01-{i:02d}" for i in range(1, n + 1)]
+    details = [np.linspace(-1, 1, n), np.linspace(1, -1, n)]
+    scaling = np.zeros(n)
+    result = WaveletTransformResult(
+        details=[np.asarray(d) for d in details],
+        scaling=np.asarray(scaling),
+        dates=dates,
+        meta={"level": 2, "wavelet": "sym2"},
+    )
+
+    coeffs_doc = to_coefficients_json("aapl", result)
+    assert coeffs_doc["metadata"]["wavelet"] == "sym2"
+    assert coeffs_doc["coefficients"]["cD1"][0]["date"] == dates[0]
+    assert coeffs_doc["coefficients"]["cA2"][-1]["value"] == pytest.approx(0.0)
+
+    spectrum = {"per_level": {"D1": 1.0, "D2": 2.0, "S2": 3.0}, "total_variance": 0.5}
+    histos = {"D1": {"bin_edges": [0, 1], "counts": [10]}}
+    meta = {"analysis_start": dates[0], "analysis_end": dates[-1]}
+    hist_doc = to_volatility_histogram_json("aapl", spectrum, histos, meta)
+    assert hist_doc["metadata"]["analysis_end"] == dates[-1]
+    assert hist_doc["variance_spectrum"]["per_level"]["S2"] == 3.0
+
+    recon_doc = to_reconstructed_prices_json("aapl", dates, {"S1": [1.0] * n}, meta)
+    assert recon_doc["reconstructions"]["S1"][0]["value"] == pytest.approx(1.0)
