@@ -22,6 +22,15 @@ def test_settings_dir_validation(tmp_path: Path):
         Settings(input_dir=str(tmp_path / "nope"), output_dir=str(out_dir)).ensure_directories()
 
 
+def test_settings_empty_dir_validation():
+    """Test that empty input/output directories raise validation error."""
+    with pytest.raises(ValueError, match="Input and output directories must be provided"):
+        Settings(input_dir="", output_dir="/tmp/out")
+    
+    with pytest.raises(ValueError, match="Input and output directories must be provided"):
+        Settings(input_dir="/tmp/in", output_dir="")
+
+
 def test_configure_logging_plain_and_json(caplog):
     caplog.set_level(logging.INFO)
     configure_logging(level="INFO", fmt="plain")
