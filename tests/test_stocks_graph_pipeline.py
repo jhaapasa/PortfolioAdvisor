@@ -58,7 +58,12 @@ def test_update_ticker_pipeline_writes_all_artifacts(tmp_path, monkeypatch):
     out_dir.mkdir(parents=True, exist_ok=True)
     inp_dir.mkdir(parents=True, exist_ok=True)
 
-    settings = Settings(input_dir=str(inp_dir), output_dir=str(out_dir), verbose=True)
+    settings = Settings(
+        input_dir=str(inp_dir),
+        output_dir=str(out_dir),
+        verbose=True,
+        polygon_api_key="dummy_api_key_for_test",
+    )
 
     # Act
     update_instrument(
