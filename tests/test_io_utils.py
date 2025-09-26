@@ -37,18 +37,18 @@ def test_read_files_preview_with_errors(tmp_path: Path, caplog):
     # Create a file
     f1 = tmp_path / "readable.txt"
     f1.write_text("readable content")
-    
+
     # Create a path that doesn't exist
     f2 = tmp_path / "missing.txt"
-    
+
     # Preview both
     previews = read_files_preview([f1, f2])
-    
+
     # Should only have the readable file
     assert len(previews) == 1
     assert previews[0][0] == f1
     assert previews[0][1] == "readable content"
-    
+
     # Should have logged warning about missing file
     assert "Failed reading" in caplog.text
 
@@ -59,7 +59,7 @@ def test_write_output_text_error(tmp_path: Path):
     bad_dir = tmp_path / "readonly_dir"
     bad_dir.mkdir()
     bad_dir.chmod(0o444)  # Read-only
-    
+
     try:
         with pytest.raises(InputOutputError, match="Failed writing output"):
             write_output_text(str(bad_dir), "test.txt", "content")

@@ -26,7 +26,7 @@ def test_settings_empty_dir_validation():
     """Test that empty input/output directories raise validation error."""
     with pytest.raises(ValueError, match="Input and output directories must be provided"):
         Settings(input_dir="", output_dir="/tmp/out")
-    
+
     with pytest.raises(ValueError, match="Input and output directories must be provided"):
         Settings(input_dir="/tmp/in", output_dir="")
 

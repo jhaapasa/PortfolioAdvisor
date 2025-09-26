@@ -31,17 +31,17 @@ def test_build_resolver_with_api_key():
         resolver_default_locale="us",
         resolver_confidence_threshold=0.7,
     )
-    
+
     with patch("portfolio_advisor.agents.resolver.PolygonClient") as mock_client:
         resolver = _build_resolver(settings)
-        
+
         # Check PolygonClient was created with correct params
         mock_client.assert_called_once_with(
             api_key="test-key",
             base_url="https://api.test.com",
             timeout_s=20,
         )
-        
+
         # Check resolver config
         assert resolver._config.default_locale == "us"
         assert resolver._config.preferred_mics == ("XNAS", "XNYS")
@@ -55,10 +55,10 @@ def test_build_resolver_without_api_key(caplog):
         output_dir="/tmp/out",
         polygon_api_key=None,  # No API key
     )
-    
+
     with caplog.at_level("INFO"):
         resolver = _build_resolver(settings)
-    
+
     assert "resolver will operate in offline mode" in caplog.text
     assert resolver._provider is None
 
@@ -71,7 +71,7 @@ def test_build_resolver_with_mic_list():
     )
     # Simulate MICs provided as list (e.g., from override)
     settings.resolver_preferred_mics = ["XNAS", "XNYS", "ARCX"]
-    
+
     resolver = _build_resolver(settings)
     assert resolver._config.preferred_mics == ("XNAS", "XNYS", "ARCX")
 
@@ -84,7 +84,7 @@ def test_build_resolver_with_invalid_mics():
     )
     # Simulate invalid MICs that can't be converted to strings
     settings.resolver_preferred_mics = object()  # Not iterable
-    
+
     resolver = _build_resolver(settings)
     # Should fall back to defaults
     assert resolver._config.preferred_mics == ("XNAS", "XNYS", "ARCX")
@@ -107,7 +107,7 @@ def test_resolve_one_node_success():
         total_value=15000.0,
     )
     mock_resolver.resolve_one.return_value = mock_holding
-    
+
     state = {
         "settings": Settings(input_dir="/tmp/in", output_dir="/tmp/out"),
         "holding": {
@@ -117,10 +117,10 @@ def test_resolve_one_node_success():
             "unit_value": 150,
         },
     }
-    
+
     with patch("portfolio_advisor.agents.resolver._build_resolver", return_value=mock_resolver):
         result = resolve_one_node(state)
-    
+
     assert "resolved_holdings" in result
     assert len(result["resolved_holdings"]) == 1
     assert result["resolved_holdings"][0]["primary_ticker"] == "AAPL"
@@ -136,7 +136,7 @@ def test_resolve_one_node_unresolved():
         "reason": "No match found",
     }
     mock_resolver.resolve_one.return_value = unresolved_dict
-    
+
     state = {
         "settings": Settings(input_dir="/tmp/in", output_dir="/tmp/out"),
         "holding": {
@@ -145,10 +145,10 @@ def test_resolve_one_node_unresolved():
             "quantity": 50,
         },
     }
-    
+
     with patch("portfolio_advisor.agents.resolver._build_resolver", return_value=mock_resolver):
         result = resolve_one_node(state)
-    
+
     assert "unresolved_entities" in result
     assert len(result["unresolved_entities"]) == 1
     assert result["unresolved_entities"][0] == unresolved_dict
@@ -158,15 +158,15 @@ def test_resolve_one_node_no_holding():
     """Test handling when no holding is provided in state."""
     mock_resolver = MagicMock()
     mock_resolver.resolve_one.return_value = {"reason": "No holding provided"}
-    
+
     state = {
         "settings": Settings(input_dir="/tmp/in", output_dir="/tmp/out"),
         # No holding key
     }
-    
+
     with patch("portfolio_advisor.agents.resolver._build_resolver", return_value=mock_resolver):
         result = resolve_one_node(state)
-    
+
     # Should still work with empty dict
     assert "unresolved_entities" in result
     mock_resolver.resolve_one.assert_called_once_with({})
