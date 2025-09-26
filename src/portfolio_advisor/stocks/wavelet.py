@@ -68,7 +68,8 @@ def compute_modwt_logreturns(
     # Tail mirror-pad to multiple of 2^level
     padded, pad_len = _tail_pad_to_power_of_two_length(log_returns, power=level)
 
-    # SWT with proper MODWT parameters: trim_approx=True for energy conservation and variance partitioning
+    # SWT with proper MODWT parameters: trim_approx=True for energy conservation
+    # and variance partitioning
     coeffs = pywt.swt(data=padded, wavelet=wavelet, level=level, trim_approx=True, norm=True)
     # coeffs format with trim_approx=True: [cA_J, cD_J, cD_{J-1}, ..., cD_1]
     scaling = coeffs[0]  # cA_J (approximation at final level)
@@ -135,7 +136,8 @@ def compute_modwt_logprice(
     # Tail mirror-pad to multiple of 2^level
     padded, pad_len = _tail_pad_to_power_of_two_length(log_price, power=level)
 
-    # SWT with proper MODWT parameters: trim_approx=True for energy conservation and variance partitioning
+    # SWT with proper MODWT parameters: trim_approx=True for energy conservation
+    # and variance partitioning
     coeffs = pywt.swt(data=padded, wavelet=wavelet, level=level, trim_approx=True, norm=True)
     # coeffs format with trim_approx=True: [cA_J, cD_J, cD_{J-1}, ..., cD_1]
     scaling = coeffs[0]  # cA_J (approximation at final level)
@@ -264,7 +266,7 @@ def normalize_variance_spectrum(
     -------
     Ordered dict-like mapping (by iteration) of band -> percent (0..100).
     Missing bands are treated as 0.0; if total is 0, returns 0.0 for all.
-    
+
     Note: This function operates on MRA signal variance spectrum, not raw coefficients.
     """
     if order is None:
@@ -343,22 +345,22 @@ def reconstruct_logprice_series(
     padded, pad_len = _tail_pad_to_power_of_two_length(log_price, power=effective_max_level)
 
     # Use pywt.mra for proper MODWT multiresolution analysis
-    mra_components_log = pywt.mra(padded, wavelet=wavelet, level=level, transform='swt')
+    mra_components_log = pywt.mra(padded, wavelet=wavelet, level=level, transform="swt")
     # mra_components_log = [S_J, D_J, D_{J-1}, ..., D_1] (all in log domain)
     J = level
-    
+
     # Remove padding and apply windowing
     target_len = min(504, len(dates))
     start_idx = len(dates) - target_len
-    
+
     if pad_len:
         mra_components_log = [comp[:-pad_len] for comp in mra_components_log]
-    
+
     mra_components_log = [comp[start_idx:] for comp in mra_components_log]
-    
+
     # Build all reconstructions using proper MRA additivity in log domain
     recon: dict[str, list[float]] = {}
-    
+
     # S_j = S_J + D_{j+1} + ... + D_J (using MRA components directly)
     for j in range(1, J + 1):
         s_key = f"S{j}"
@@ -370,7 +372,7 @@ def reconstruct_logprice_series(
             if d_k_index < len(mra_components_log):
                 log_s_j += mra_components_log[d_k_index]
         recon[s_key] = np.exp(log_s_j).astype(float).tolist()
-    
+
     # Build cumulative reconstructions for backward compatibility
     recon_sets: list[tuple[str, set[str]]] = []
     # S_J only
@@ -382,7 +384,7 @@ def reconstruct_logprice_series(
         accum = set(accum) | {band}
         name = "_".join(sorted(accum, key=lambda k: (k[0] != "S", -int(k[1:]))))
         recon_sets.append((name, set(accum)))
-    
+
     for name, include in recon_sets:
         if name not in recon:  # Don't overwrite S_j keys
             # Build cumulative reconstruction in log domain

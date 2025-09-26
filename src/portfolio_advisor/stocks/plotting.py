@@ -156,25 +156,25 @@ def render_candlestick_ohlcv_2y_wavelet_trends(
             # Plot S_J, S_{J-1}, and S_{J-2} for progressive trend detail
             max_level = max(s_levels_present)
             target_levels = [max_level]  # Always include S_J (coarsest)
-            
+
             # Add S_{J-1} and S_{J-2} if available
             if max_level >= 2:
                 target_levels.append(max_level - 1)  # S_{J-1}
             if max_level >= 3:
                 target_levels.append(max_level - 2)  # S_{J-2}
-            
+
             # Color palette for the three levels
             colors = ["#d62728", "#ff7f0e", "#2ca02c"]  # Red, Orange, Green
             widths = [2.0, 1.7, 1.4]  # Decreasing thickness
             alphas = [0.8, 0.7, 0.6]  # Decreasing opacity
-            
+
             # Helper function to get day range for wavelet level
             def get_day_range(level: int) -> str:
                 """Get the day range for a wavelet decomposition level assuming daily data."""
                 # For MODWT, level j corresponds to periods of approximately 2^j days
-                period = 2 ** level
+                period = 2**level
                 return f"~{period} days"
-            
+
             for i, k in enumerate(target_levels):
                 if k not in s_levels_present:
                     continue
@@ -194,17 +194,17 @@ def render_candlestick_ohlcv_2y_wavelet_trends(
                     s = s.reindex(tail.index).dropna(how="all")
                     if s.notna().sum() < max(30, int(0.1 * len(tail))):
                         continue
-                    
+
                     # Visual encoding with distinct colors and decreasing thickness
                     color = colors[i % len(colors)]
                     width = widths[i % len(widths)]
                     alpha = alphas[i % len(alphas)]
-                    
+
                     # Create legend label with day range
                     day_range = get_day_range(k)
                     legend_label = f"S_{k} ({day_range})"
                     legend_labels.append(legend_label)
-                    
+
                     ap = mpf.make_addplot(
                         s,
                         panel=0,
@@ -299,23 +299,26 @@ def render_candlestick_ohlcv_2y_wavelet_trends(
                 if legend_labels:
                     try:
                         # Get the main price axis (usually the first one)
-                        ax = _axes[0] if isinstance(_axes, (list, tuple)) else _axes
-                        
+                        ax = _axes[0] if isinstance(_axes, list | tuple) else _axes
+
                         # Create legend entries for the overlays
                         import matplotlib.lines as mlines  # type: ignore
+
                         legend_elements = []
                         colors = ["#d62728", "#ff7f0e", "#2ca02c"]  # Match the overlay colors
-                        
+
                         for i, label in enumerate(legend_labels):
                             color = colors[i % len(colors)]
                             line = mlines.Line2D([], [], color=color, linewidth=2, label=label)
                             legend_elements.append(line)
-                        
+
                         # Add legend in upper left corner
-                        ax.legend(handles=legend_elements, loc='upper left', framealpha=0.9, fontsize=9)
+                        ax.legend(
+                            handles=legend_elements, loc="upper left", framealpha=0.9, fontsize=9
+                        )
                     except Exception:  # pragma: no cover - legend is optional
                         _logger.debug("Failed to add legend to wavelet trends plot", exc_info=True)
-                
+
                 fig.savefig(str(out_path), dpi=150, bbox_inches="tight")
         finally:
             try:
