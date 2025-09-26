@@ -176,5 +176,3 @@ def test_build_llm_without_api_key(caplog):
     assert isinstance(chat_result.generations[0], ChatGeneration)
     assert isinstance(chat_result.generations[0].message, AIMessage)
     assert "Placeholder analysis" in chat_result.generations[0].message.content
-
-

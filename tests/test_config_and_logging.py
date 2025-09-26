@@ -31,6 +31,20 @@ def test_settings_empty_dir_validation():
         Settings(input_dir="/tmp/in", output_dir="")
 
 
+def test_settings_wavelet_level_validation():
+    """Test wavelet level validation."""
+    # Valid levels
+    assert Settings(input_dir="/tmp/in", output_dir="/tmp/out", wavelet_level=1).wavelet_level == 1
+    assert Settings(input_dir="/tmp/in", output_dir="/tmp/out", wavelet_level=8).wavelet_level == 8
+
+    # Invalid levels
+    with pytest.raises(ValueError, match="WAVELET_LEVEL must be between 1 and 8"):
+        Settings(input_dir="/tmp/in", output_dir="/tmp/out", wavelet_level=0)
+
+    with pytest.raises(ValueError, match="WAVELET_LEVEL must be between 1 and 8"):
+        Settings(input_dir="/tmp/in", output_dir="/tmp/out", wavelet_level=9)
+
+
 def test_configure_logging_plain_and_json(caplog):
     caplog.set_level(logging.INFO)
     configure_logging(level="INFO", fmt="plain")

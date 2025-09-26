@@ -7,7 +7,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from portfolio_advisor.agents.resolver import _build_resolver, resolve_one_node
-from portfolio_advisor.config import Settings
 from portfolio_advisor.models.canonical import CanonicalHolding
 
 
@@ -19,78 +18,113 @@ def clean_env(monkeypatch):
     monkeypatch.delenv("POLYGON_API_KEY", raising=False)
 
 
-def test_build_resolver_with_api_key():
-    """Test building resolver with API key."""
-    settings = Settings(
-        input_dir="/tmp/in",
-        output_dir="/tmp/out",
-        polygon_api_key="test-key",
-        polygon_base_url="https://api.test.com",
-        polygon_timeout_s=20,
-        resolver_preferred_mics="XNAS,XNYS",
-        resolver_default_locale="us",
-        resolver_confidence_threshold=0.7,
-    )
+def test_build_resolver_offline_mode(monkeypatch, caplog):
+    """Test building resolver in offline mode without API key."""
+    import logging
 
-    with patch("portfolio_advisor.agents.resolver.PolygonClient") as mock_client:
+    # Ensure we capture logs from the resolver module
+    logging.getLogger("portfolio_advisor.agents.resolver").setLevel(logging.INFO)
+
+    # Mock PolygonClient to ensure it's not created when api_key is None
+    mock_polygon_client = MagicMock()
+    monkeypatch.setattr("portfolio_advisor.agents.resolver.PolygonClient", mock_polygon_client)
+
+    # Create settings with no API key - explicitly override any env vars
+    settings = MagicMock()
+    settings.polygon_api_key = None
+    settings.polygon_base_url = None
+    settings.polygon_timeout_s = 10
+    settings.resolver_preferred_mics = "XNAS,XNYS,ARCX"
+    settings.resolver_default_locale = "us"
+    settings.resolver_confidence_threshold = 0.6
+
+    with caplog.at_level(logging.INFO):
         resolver = _build_resolver(settings)
 
-        # Check PolygonClient was created with correct params
-        mock_client.assert_called_once_with(
-            api_key="test-key",
-            base_url="https://api.test.com",
-            timeout_s=20,
-        )
+    # PolygonClient should NOT have been created
+    mock_polygon_client.assert_not_called()
 
-        # Check resolver config
-        assert resolver._config.default_locale == "us"
-        assert resolver._config.preferred_mics == ("XNAS", "XNYS")
-        assert resolver._config.confidence_threshold == 0.7
+    # Check that offline mode was logged
+    assert "Polygon API key not set; resolver will operate in offline mode" in caplog.text
 
-
-def test_build_resolver_without_api_key(caplog):
-    """Test building resolver without API key (offline mode)."""
-    settings = Settings(
-        input_dir="/tmp/in",
-        output_dir="/tmp/out",
-        polygon_api_key=None,  # No API key
-    )
-
-    with caplog.at_level("INFO"):
-        resolver = _build_resolver(settings)
-
-    assert "resolver will operate in offline mode" in caplog.text
+    # Resolver should still be created with None provider
+    assert resolver is not None
     assert resolver._provider is None
+    assert resolver._config.default_locale == "us"
+    assert resolver._config.preferred_mics == ("XNAS", "XNYS", "ARCX")
 
 
-def test_build_resolver_with_mic_list():
-    """Test building resolver with MICs as list instead of string."""
-    settings = Settings(
-        input_dir="/tmp/in",
-        output_dir="/tmp/out",
+def test_build_resolver_with_api_key(monkeypatch):
+    """Test building resolver with API key creates PolygonClient."""
+    # Mock PolygonClient
+    mock_polygon_instance = MagicMock()
+    mock_polygon_class = MagicMock(return_value=mock_polygon_instance)
+    monkeypatch.setattr("portfolio_advisor.agents.resolver.PolygonClient", mock_polygon_class)
+
+    # Create settings with API key
+    settings = MagicMock()
+    settings.polygon_api_key = "test-api-key"
+    settings.polygon_base_url = "https://api.test.com"
+    settings.polygon_timeout_s = 20
+    settings.resolver_preferred_mics = "XNAS,XNYS"
+    settings.resolver_default_locale = "us"
+    settings.resolver_confidence_threshold = 0.7
+
+    resolver = _build_resolver(settings)
+
+    # PolygonClient should have been created with correct params
+    mock_polygon_class.assert_called_once_with(
+        api_key="test-api-key", base_url="https://api.test.com", timeout_s=20
     )
+
+    # Resolver should be created with the provider
+    assert resolver is not None
+    assert resolver._provider == mock_polygon_instance
+    assert resolver._config.default_locale == "us"
+    assert resolver._config.preferred_mics == ("XNAS", "XNYS")
+    assert resolver._config.confidence_threshold == 0.7
+
+
+def test_build_resolver_with_mic_list(monkeypatch):
+    """Test building resolver with MICs as list instead of string."""
+    # Mock PolygonClient to avoid real instantiation
+    mock_polygon_class = MagicMock()
+    monkeypatch.setattr("portfolio_advisor.agents.resolver.PolygonClient", mock_polygon_class)
+
+    settings = MagicMock()
+    settings.polygon_api_key = "dummy-key"
+    settings.polygon_base_url = None
+    settings.polygon_timeout_s = 10
     # Simulate MICs provided as list (e.g., from override)
     settings.resolver_preferred_mics = ["XNAS", "XNYS", "ARCX"]
+    settings.resolver_default_locale = "us"
+    settings.resolver_confidence_threshold = 0.6
 
     resolver = _build_resolver(settings)
     assert resolver._config.preferred_mics == ("XNAS", "XNYS", "ARCX")
 
 
-def test_build_resolver_with_invalid_mics():
+def test_build_resolver_with_invalid_mics(monkeypatch):
     """Test building resolver with invalid MICs falls back to defaults."""
-    settings = Settings(
-        input_dir="/tmp/in",
-        output_dir="/tmp/out",
-    )
+    # Mock PolygonClient to avoid real instantiation
+    mock_polygon_class = MagicMock()
+    monkeypatch.setattr("portfolio_advisor.agents.resolver.PolygonClient", mock_polygon_class)
+
+    settings = MagicMock()
+    settings.polygon_api_key = "dummy-key"
+    settings.polygon_base_url = None
+    settings.polygon_timeout_s = 10
     # Simulate invalid MICs that can't be converted to strings
     settings.resolver_preferred_mics = object()  # Not iterable
+    settings.resolver_default_locale = "us"
+    settings.resolver_confidence_threshold = 0.6
 
     resolver = _build_resolver(settings)
     # Should fall back to defaults
     assert resolver._config.preferred_mics == ("XNAS", "XNYS", "ARCX")
 
 
-def test_resolve_one_node_success():
+def test_resolve_one_node_success(monkeypatch):
     """Test successful resolution of a holding."""
     mock_resolver = MagicMock()
     mock_holding = CanonicalHolding(
@@ -108,8 +142,12 @@ def test_resolve_one_node_success():
     )
     mock_resolver.resolve_one.return_value = mock_holding
 
+    # Mock the Settings class to avoid environment variable interference
+    mock_settings = MagicMock()
+    mock_settings.polygon_api_key = "test-key"
+
     state = {
-        "settings": Settings(input_dir="/tmp/in", output_dir="/tmp/out"),
+        "settings": mock_settings,
         "holding": {
             "symbol": "AAPL",
             "name": "Apple Inc.",
@@ -127,7 +165,7 @@ def test_resolve_one_node_success():
     mock_resolver.resolve_one.assert_called_once()
 
 
-def test_resolve_one_node_unresolved():
+def test_resolve_one_node_unresolved(monkeypatch):
     """Test handling of unresolved holding."""
     mock_resolver = MagicMock()
     unresolved_dict = {
@@ -137,8 +175,12 @@ def test_resolve_one_node_unresolved():
     }
     mock_resolver.resolve_one.return_value = unresolved_dict
 
+    # Mock the Settings class
+    mock_settings = MagicMock()
+    mock_settings.polygon_api_key = "test-key"
+
     state = {
-        "settings": Settings(input_dir="/tmp/in", output_dir="/tmp/out"),
+        "settings": mock_settings,
         "holding": {
             "symbol": "UNKNOWN",
             "name": "Unknown Company",
@@ -154,13 +196,17 @@ def test_resolve_one_node_unresolved():
     assert result["unresolved_entities"][0] == unresolved_dict
 
 
-def test_resolve_one_node_no_holding():
+def test_resolve_one_node_no_holding(monkeypatch):
     """Test handling when no holding is provided in state."""
     mock_resolver = MagicMock()
     mock_resolver.resolve_one.return_value = {"reason": "No holding provided"}
 
+    # Mock the Settings class
+    mock_settings = MagicMock()
+    mock_settings.polygon_api_key = "test-key"
+
     state = {
-        "settings": Settings(input_dir="/tmp/in", output_dir="/tmp/out"),
+        "settings": mock_settings,
         # No holding key
     }
 
