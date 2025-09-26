@@ -9,7 +9,6 @@ import pytest
 from portfolio_advisor.agents.resolver import _build_resolver, resolve_one_node
 from portfolio_advisor.config import Settings
 from portfolio_advisor.models.canonical import CanonicalHolding
-from portfolio_advisor.tools.symbol_resolver import ResolverConfig
 
 
 @pytest.fixture(autouse=True)

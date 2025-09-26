@@ -5,8 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from portfolio_advisor.utils.fs import utcnow_iso, write_json_atomic
 
 
