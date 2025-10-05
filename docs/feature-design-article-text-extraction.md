@@ -4,6 +4,8 @@
 
 This document outlines the design for extracting article text from downloaded HTML news articles using the local milkey/reader-lm-v2:Q8_0 model via ollama. The feature will process HTML files and store the extracted text alongside the original HTML, enabling easier analysis and search capabilities.
 
+**Status**: Experimental - Due to model quality limitations, this feature is disabled by default and requires explicit activation via CLI flags.
+
 ## Requirements
 
 1. Use ollama with milkey/reader-lm-v2:Q8_0 model for text extraction
@@ -276,11 +278,20 @@ stats = extractor.extract_all_articles("cid-stocks-us-xnas-aapl", force=False)
 print(f"Extracted {stats['extracted']} articles")
 ```
 
+## Known Limitations
+
+1. **Model Quality**: The milkey/reader-lm-v2:Q8_0 model sometimes generates generic content instead of extracting verbatim text
+2. **Content Mixing**: The model may mix content from different parts of the page (e.g., related articles)
+3. **Repetitive Output**: Large articles may result in repetitive content
+4. **Processing Time**: Large HTML files (>30KB cleaned) may take 60+ seconds to process
+
 ## Future Enhancements
 
 1. **Model selection**: Support for different models based on article type
-2. **Language detection**: Automatic language-specific model selection
-3. **Structured extraction**: Extract specific fields (quotes, financial data)
-4. **Quality scoring**: Rate extraction quality and flag for review
-5. **Incremental updates**: Extract only new articles since last run
-6. **API endpoint**: REST API for on-demand extraction
+2. **Alternative models**: Test with other Ollama models optimized for text extraction
+3. **Hybrid approach**: Combine traditional HTML parsing with LLM-based cleaning
+4. **Language detection**: Automatic language-specific model selection
+5. **Structured extraction**: Extract specific fields (quotes, financial data)
+6. **Quality scoring**: Rate extraction quality and flag for review
+7. **Incremental updates**: Extract only new articles since last run
+8. **API endpoint**: REST API for on-demand extraction

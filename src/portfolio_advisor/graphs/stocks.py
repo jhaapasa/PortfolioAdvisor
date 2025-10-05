@@ -132,9 +132,10 @@ def _check_db_state_node(state: StockState) -> dict:
         if needs_news_update:
             updates.append("primary.news")
 
-    # Check if text extraction is needed
+    # Check if text extraction is explicitly requested
     extract_text = getattr(settings, "extract_text", False)
     if extract_text and has_rows and news_index_path.exists():
+        # Only run extraction if explicitly enabled via --extract-text flag
         try:
             import json
 

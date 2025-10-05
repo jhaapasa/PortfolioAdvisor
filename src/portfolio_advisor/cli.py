@@ -58,7 +58,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="extract_text",
         default=None,
         action=argparse.BooleanOptionalAction,
-        help="Extract text from HTML articles using Ollama (default: False)",
+        help="Extract text from HTML articles using Ollama (experimental, default: False)",
     )
     p.add_argument(
         "--force-extraction",
