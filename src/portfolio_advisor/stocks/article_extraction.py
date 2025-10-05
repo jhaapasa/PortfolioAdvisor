@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
@@ -14,20 +15,92 @@ from .db import StockPaths, _read_json
 logger = logging.getLogger(__name__)
 
 
+def clean_html(html: str) -> str:
+    """Remove scripts, styles, and other noise from HTML.
+
+    Based on ReaderLM-v2 recommendations for pre-processing.
+    """
+    # Patterns from ReaderLM-v2 documentation
+    SCRIPT_PATTERN = r"<[ ]*script.*?\/[ ]*script[ ]*>"
+    STYLE_PATTERN = r"<[ ]*style.*?\/[ ]*style[ ]*>"
+    META_PATTERN = r"<[ ]*meta.*?>"
+    COMMENT_PATTERN = r"<[ ]*!--.*?--[ ]*>"
+    LINK_PATTERN = r"<[ ]*link.*?>"
+    BASE64_IMG_PATTERN = r'<img[^>]+src="data:image/[^;]+;base64,[^"]+"[^>]*>'
+    SVG_PATTERN = r"(<svg[^>]*>)(.*?)(<\/svg>)"
+
+    # Remove scripts
+    html = re.sub(SCRIPT_PATTERN, "", html, flags=re.IGNORECASE | re.MULTILINE | re.DOTALL)
+    # Remove styles
+    html = re.sub(STYLE_PATTERN, "", html, flags=re.IGNORECASE | re.MULTILINE | re.DOTALL)
+    # Remove meta tags
+    html = re.sub(META_PATTERN, "", html, flags=re.IGNORECASE | re.MULTILINE | re.DOTALL)
+    # Remove comments
+    html = re.sub(COMMENT_PATTERN, "", html, flags=re.IGNORECASE | re.MULTILINE | re.DOTALL)
+    # Remove link tags
+    html = re.sub(LINK_PATTERN, "", html, flags=re.IGNORECASE | re.MULTILINE | re.DOTALL)
+    # Remove base64 images
+    html = re.sub(BASE64_IMG_PATTERN, '<img src="#"/>', html)
+    # Replace SVG content with placeholder
+    html = re.sub(
+        SVG_PATTERN,
+        lambda match: f"{match.group(1)}[SVG placeholder]{match.group(3)}",
+        html,
+        flags=re.DOTALL,
+    )
+
+    return html
+
+
+def extract_article_section(html: str) -> str:
+    """Try to extract just the article content section from HTML.
+
+    This helps focus the model on the main content.
+    """
+    # For GlobeNewswire, look for the main-body-container with article-body class
+    # This is very specific to avoid catching related content
+    main_body_match = re.search(
+        r'<div[^>]*class="[^"]*article-body[^"]*"[^>]*id="main-body-container"[^>]*>(.*?)</div>\s*<div[^>]*class="[^"]*(?:main-tags|related)',
+        html,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if main_body_match:
+        return main_body_match.group(0)
+
+    # Fallback: Look for article body with itemprop
+    itemprop_match = re.search(
+        r'<div[^>]*itemprop="articleBody"[^>]*>(.*?)(?=<div[^>]*class="[^"]*(?:related|tags|footer))',
+        html,
+        re.DOTALL | re.IGNORECASE,
+    )
+    if itemprop_match:
+        return itemprop_match.group(0)
+
+    # If no specific article section found, return original HTML
+    # Let the model figure it out with better prompting
+    return html
+
+
 class ArticleTextExtractionService:
     """Service for extracting text from HTML articles using LLM."""
 
-    # Prompt template for article extraction
-    EXTRACTION_PROMPT = """Extract the main article text from the following HTML. 
-Include only the article title, subtitle, author, date, and body paragraphs.
-Remove all advertisements, navigation, comments, and related articles.
-Format the output as plain text with proper paragraph breaks.
-If the HTML appears to be a paywall or error page, indicate that clearly.
+    # Prompt template for article extraction - optimized for verbatim text
+    EXTRACTION_PROMPT = """Extract the main news article content from this HTML.
+
+CRITICAL: Look for the FIRST major content section that contains news article paragraphs.
+The article usually starts with location/date like "New York, USA, Sept. 25, 2025 (GLOBE NEWSWIRE)"
+
+RULES:
+1. Extract the complete article starting from the headline/title
+2. Include all paragraphs, bullet points, and data from the main article
+3. Output text EXACTLY as written - preserve all facts, numbers, and quotes
+4. STOP when you reach: "Tags", "Related Links", "About", or similar footer sections
+5. Do NOT include navigation, ads, or content from other articles
+
+Output the full article text, starting with the headline.
 
 HTML:
-{html_content}
-
-EXTRACTED TEXT:"""
+{html_content}"""
 
     def __init__(
         self,
@@ -97,8 +170,14 @@ EXTRACTED TEXT:"""
             # Read HTML content
             html_content = html_path.read_text(encoding="utf-8", errors="ignore")
 
+            # Extract article section first to focus on main content
+            html_content = extract_article_section(html_content)
+
+            # Clean HTML to remove noise
+            html_content = clean_html(html_content)
+
             # Truncate very large HTML files to avoid token limits
-            max_html_chars = 50000
+            max_html_chars = 100000  # Increased limit since we're cleaning HTML
             if len(html_content) > max_html_chars:
                 logger.warning(
                     f"Truncating HTML for {article_id} from {len(html_content)} "
@@ -108,11 +187,20 @@ EXTRACTED TEXT:"""
 
             # Extract text using ollama
             prompt = self.EXTRACTION_PROMPT.format(html_content=html_content)
+
+            # System prompt for better guidance
+            system_prompt = (
+                "You are a news article extraction tool. Your job is to extract the main news "
+                "article content from HTML pages. Focus on the primary article, not supplementary "
+                "content. Extract the complete text verbatim without summarizing."
+            )
+
             extracted_text = self.ollama.generate(
                 model=self.model,
                 prompt=prompt,
-                temperature=0.1,  # Low temperature for consistent extraction
-                max_tokens=4000,  # Reasonable limit for article text
+                system=system_prompt,
+                temperature=0.0,  # Zero temperature for deterministic extraction
+                max_tokens=8000,  # Increased limit for full article text
             )
 
             # Save extracted text

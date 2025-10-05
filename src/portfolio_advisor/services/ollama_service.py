@@ -63,7 +63,10 @@ class OllamaService:
             "model": model,
             "prompt": prompt,
             "stream": False,
-            "options": {"temperature": temperature},
+            "options": {
+                "temperature": temperature,
+                "repeat_penalty": 1.08,  # As recommended in ReaderLM-v2 docs
+            },
         }
 
         if system:
