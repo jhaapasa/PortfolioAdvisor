@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from unittest.mock import MagicMock, Mock, patch
 
 import httpx
@@ -92,7 +91,9 @@ class TestStockNewsService:
         service.http_client = MagicMock(spec=httpx.Client)
         return service
 
-    def test_update_ticker_news_no_existing_index(self, news_service, mock_paths, mock_polygon_client):
+    def test_update_ticker_news_no_existing_index(
+        self, news_service, mock_paths, mock_polygon_client
+    ):
         """Test updating news when no index exists."""
         ticker_slug = "cid-stocks-us-xnas-aapl"
         ticker_symbol = "AAPL"

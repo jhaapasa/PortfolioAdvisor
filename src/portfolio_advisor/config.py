@@ -73,6 +73,13 @@ class Settings(BaseSettings):
     wavelet_level: int = Field(default=5, alias="WAVELET_LEVEL")
     fetch_news: bool = Field(default=True, alias="FETCH_NEWS")
 
+    # Ollama configuration for article text extraction
+    ollama_base_url: str = Field(default="http://localhost:11434", alias="OLLAMA_BASE_URL")
+    ollama_timeout_s: int = Field(default=60, alias="OLLAMA_TIMEOUT_S")
+    extraction_model: str = Field(default="milkey/reader-lm-v2:Q8_0", alias="EXTRACTION_MODEL")
+    extraction_batch_size: int = Field(default=10, alias="EXTRACTION_BATCH_SIZE")
+    extraction_max_workers: int = Field(default=4, alias="EXTRACTION_MAX_WORKERS")
+
     model_config = SettingsConfigDict(
         env_file=".env",
         extra="ignore",

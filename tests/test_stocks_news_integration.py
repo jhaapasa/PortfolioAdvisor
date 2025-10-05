@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from portfolio_advisor.config import Settings
-from portfolio_advisor.graphs.stocks import _fetch_primary_node, StockState
+from portfolio_advisor.graphs.stocks import StockState, _fetch_primary_node
 from portfolio_advisor.stocks.db import StockPaths
 
 
