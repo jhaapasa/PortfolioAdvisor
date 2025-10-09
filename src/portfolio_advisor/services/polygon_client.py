@@ -167,3 +167,37 @@ class PolygonClient:
                 "volume": int(volume_v or 0),
                 "vwap": float(vwap_v) if vwap_v is not None else None,
             }
+
+    def list_ticker_news(
+        self,
+        ticker: str,
+        published_utc_gte: str | None = None,
+        published_utc_lte: str | None = None,
+        limit: int = 1000,
+        order: str = "desc",
+    ) -> Iterable[dict[str, Any]]:
+        """Yield news articles for a ticker from Polygon's news endpoint.
+
+        Parameters:
+            ticker: Stock ticker symbol
+            published_utc_gte: Filter for articles published on or after (ISO format)
+            published_utc_lte: Filter for articles published on or before (ISO format)
+            limit: Max results per page (default 1000)
+            order: Sort order - 'asc' or 'desc' by published_utc
+        """
+        client = self._ensure_client()
+
+        # The polygon client has a list_ticker_news method
+        for article in client.list_ticker_news(
+            ticker=ticker,
+            published_utc_gte=published_utc_gte,
+            published_utc_lte=published_utc_lte,
+            limit=limit,
+            order=order,
+        ):
+            if hasattr(article, "model_dump"):
+                yield article.model_dump()
+            elif hasattr(article, "__dict__"):
+                yield dict(article.__dict__)
+            else:
+                yield dict(article)

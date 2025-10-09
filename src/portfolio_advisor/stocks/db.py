@@ -56,6 +56,21 @@ class StockPaths:
     def lock_dir(self, ticker: str) -> Path:
         return self.ticker_dir(ticker) / ".lock"
 
+    def news_dir(self, ticker: str) -> Path:
+        return self.ticker_dir(ticker) / "primary" / "news"
+
+    def news_index_json(self, ticker: str) -> Path:
+        return self.news_dir(ticker) / "index.json"
+
+    def news_article_json(self, ticker: str, article_id: str) -> Path:
+        return self.news_dir(ticker) / f"{article_id}.json"
+
+    def news_articles_dir(self, ticker: str) -> Path:
+        return self.news_dir(ticker) / "articles"
+
+    def news_article_content(self, ticker: str, article_id: str, extension: str = "html") -> Path:
+        return self.news_articles_dir(ticker) / f"{article_id}.{extension}"
+
 
 def ensure_ticker_scaffold(paths: StockPaths, ticker: str) -> None:
     base = paths.ticker_dir(ticker)

@@ -9,12 +9,14 @@ from langgraph.graph import END, StateGraph
 
 from ..config import Settings
 from ..models.canonical import InstrumentKey
+from ..services.ollama_service import OllamaService
 from ..services.polygon_client import PolygonClient
 from ..stocks.analysis import (
     compute_sma_series,
     compute_trailing_returns,
     compute_volatility_annualized,
 )
+from ..stocks.article_extraction import ArticleTextExtractionService
 from ..stocks.db import (
     StockPaths,
     append_ohlc_rows,
@@ -26,6 +28,7 @@ from ..stocks.db import (
     write_meta,
     write_primary_ohlc,
 )
+from ..stocks.news import StockNewsService
 from ..stocks.plotting import (
     plot_wavelet_variance_spectrum,
     render_candlestick_ohlcv_1y,
@@ -100,6 +103,57 @@ def _check_db_state_node(state: StockState) -> dict:
         needs_primary = not has_rows or coverage_end is None or coverage_end < last_trading_day
         if needs_primary:
             updates.append("primary.ohlc_daily")
+
+    # Check if news needs updating (independent of OHLC)
+    fetch_news = getattr(settings, "fetch_news", True)
+    if fetch_news and has_rows:  # Only fetch news if we have stock data
+        # Check if news index exists and when it was last updated
+        news_index_path = paths.news_index_json(slug)
+        needs_news_update = True
+        if news_index_path.exists():
+            try:
+                import json
+
+                with news_index_path.open("r") as f:
+                    news_index = json.load(f)
+                last_news_update = news_index.get("last_updated", "")
+                if last_news_update:
+                    # Only update if last update was more than 1 hour ago
+                    from datetime import UTC, datetime, timedelta
+
+                    last_update_time = datetime.fromisoformat(
+                        last_news_update.replace("Z", "+00:00")
+                    )
+                    if datetime.now(UTC) - last_update_time < timedelta(hours=1):
+                        needs_news_update = False
+            except Exception:
+                pass  # If anything fails, update news
+
+        if needs_news_update:
+            updates.append("primary.news")
+
+    # Check if text extraction is explicitly requested
+    extract_text = getattr(settings, "extract_text", False)
+    if extract_text and has_rows and news_index_path.exists():
+        # Only run extraction if explicitly enabled via --extract-text flag
+        try:
+            import json
+
+            with news_index_path.open("r") as f:
+                news_index = json.load(f)
+            articles = news_index.get("articles", {})
+            needs_extraction = False
+
+            for article_info in articles.values():
+                if article_info.get("has_full_content") and not article_info.get("text_extracted"):
+                    needs_extraction = True
+                    break
+
+            if needs_extraction:
+                updates.append("primary.text_extraction")
+        except Exception:
+            pass  # If anything fails, skip extraction
+
     # Analysis artifacts depend on OHLC.
     # Even if primary is unchanged, allow recompute when requested.
     for art in ("analysis.returns", "analysis.volatility", "analysis.sma_20_50_100_200"):
@@ -115,11 +169,12 @@ def _check_db_state_node(state: StockState) -> dict:
         updates.append("analysis.wavelet_modwt")
 
     _logger.info(
-        "stocks.check_db_state: slug=%s requested=%s coverage_end=%s updates=%s",
+        "stocks.check_db_state: slug=%s requested=%s coverage_end=%s updates=%s fetch_news=%s",
         slug,
         ",".join(requested),
         coverage_end,
         ",".join(updates),
+        fetch_news,
     )
     return {"updates_needed": updates, "_slug": slug, "_paths": paths}
 
@@ -163,25 +218,118 @@ def _fetch_primary_node(state: StockState) -> dict:
             start,
             end,
         )
-        # If start is after end, nothing to fetch
-        if start > end:
-            new_rows = []
+        # Check if we need to fetch OHLC data
+        needs = state.get("updates_needed") or []
+        if "primary.ohlc_daily" in needs:
+            # If start is after end, nothing to fetch
+            if start > end:
+                new_rows = []
+            else:
+                new_rows = list(client.list_aggs_daily(ticker=ticker, from_date=start, to_date=end))
+            if new_rows:
+                merged = append_ohlc_rows(current, new_rows)
+            else:
+                merged = current
+            merged["instrument_id"] = iid
+            merged["primary_ticker"] = ticker
+            write_primary_ohlc(paths, slug, merged)
+            _logger.info(
+                "stocks.fetch_primary: slug=%s wrote ohlc rows=%d coverage_end=%s",
+                slug,
+                len(merged.get("data", [])),
+                (merged.get("coverage") or {}).get("end_date"),
+            )
         else:
-            new_rows = list(client.list_aggs_daily(ticker=ticker, from_date=start, to_date=end))
-        if new_rows:
-            merged = append_ohlc_rows(current, new_rows)
-        else:
+            # No OHLC update needed, just use current data
             merged = current
-        merged["instrument_id"] = iid
-        merged["primary_ticker"] = ticker
-        write_primary_ohlc(paths, slug, merged)
+
+        # Fetch news if enabled
+        fetch_news = getattr(settings, "fetch_news", True)
         _logger.info(
-            "stocks.fetch_primary: slug=%s wrote ohlc rows=%d coverage_end=%s",
-            slug,
-            len(merged.get("data", [])),
-            (merged.get("coverage") or {}).get("end_date"),
+            "stocks.fetch_primary: news fetching check - fetch_news=%s ticker=%s",
+            fetch_news,
+            ticker,
         )
+        if fetch_news and ticker:
+            try:
+                with StockNewsService(paths, client) as news_service:
+                    news_stats = news_service.update_ticker_news(
+                        ticker_slug=slug, ticker_symbol=ticker, days_back=7
+                    )
+                    _logger.info(
+                        "stocks.fetch_primary: slug=%s news update stats=%s",
+                        slug,
+                        news_stats,
+                    )
+            except Exception:
+                _logger.warning(
+                    "stocks.fetch_primary: news fetching failed for %s", ticker, exc_info=True
+                )
+
         return {}
+
+
+def _extract_article_text_node(state: StockState) -> dict:
+    """Extract text from downloaded articles using Ollama."""
+    settings: Settings = state["settings"]
+    instrument = state["instrument"]
+    slug = state.get("_slug") or instrument_id_to_slug(str(instrument.get("instrument_id")))
+    paths = state.get("_paths") or StockPaths(root=(Path(settings.output_dir) / "stocks"))
+    ticker = str(instrument.get("primary_ticker", ""))
+
+    # Check if extraction is needed
+    needs = state.get("updates_needed") or []
+    if "primary.text_extraction" not in needs:
+        return {}
+
+    # Check if ollama is configured
+    if not hasattr(settings, "ollama_base_url"):
+        _logger.warning("Ollama not configured, skipping text extraction")
+        return {}
+
+    try:
+        # Initialize services
+        with OllamaService(
+            base_url=settings.ollama_base_url, timeout_s=settings.ollama_timeout_s
+        ) as ollama:
+            # Check if ollama is available
+            if not ollama.is_available():
+                _logger.warning("Ollama service not available, skipping text extraction")
+                return {}
+
+            # Check if model exists
+            if not ollama.model_exists(settings.extraction_model):
+                _logger.warning(
+                    "Model %s not found. Please run: ollama pull %s",
+                    settings.extraction_model,
+                    settings.extraction_model,
+                )
+                return {}
+
+            # Initialize extraction service
+            extractor = ArticleTextExtractionService(
+                paths=paths, ollama_service=ollama, model=settings.extraction_model
+            )
+
+            # Extract text from articles
+            force = getattr(settings, "force_extraction", False)
+            stats = extractor.extract_all_articles(
+                ticker_slug=slug, force=force, batch_size=settings.extraction_batch_size
+            )
+
+            _logger.info(
+                "stocks.extract_text: slug=%s ticker=%s extracted=%d skipped=%d errors=%d",
+                slug,
+                ticker,
+                stats["extracted"],
+                stats["skipped"],
+                stats["errors"],
+            )
+
+    except Exception:
+        _logger.warning("stocks.extract_text: extraction failed for %s", ticker, exc_info=True)
+
+    return {}
 
 
 def _compute_returns_node(state: StockState) -> dict:
@@ -464,6 +612,7 @@ def build_stocks_graph() -> Any:
     graph.add_node("resolve_ticker", _resolve_ticker_node)
     graph.add_node("check_db_state", _check_db_state_node)
     graph.add_node("fetch_primary", _fetch_primary_node)
+    graph.add_node("extract_article_text", _extract_article_text_node)
     graph.add_node("compute_returns", _compute_returns_node)
     graph.add_node("compute_volatility", _compute_volatility_node)
     graph.add_node("compute_sma", _compute_sma_node)
@@ -477,10 +626,28 @@ def build_stocks_graph() -> Any:
     # Conditionally run primary fetch using conditional edges
     def _route_after_check(state: StockState):
         needs = state.get("updates_needed") or []
-        return "fetch_primary" if "primary.ohlc_daily" in needs else "compute_returns"
+        # Go to fetch_primary if either OHLC or news needs updating
+        if "primary.ohlc_daily" in needs or "primary.news" in needs:
+            return "fetch_primary"
+        # Go to text extraction if needed
+        elif "primary.text_extraction" in needs:
+            return "extract_article_text"
+        else:
+            return "compute_returns"
 
     graph.add_conditional_edges("check_db_state", _route_after_check)
-    graph.add_edge("fetch_primary", "compute_returns")
+
+    # Route after fetch_primary
+    def _route_after_fetch(state: StockState):
+        needs = state.get("updates_needed") or []
+        # Check if text extraction is needed after fetching news
+        if "primary.text_extraction" in needs:
+            return "extract_article_text"
+        else:
+            return "compute_returns"
+
+    graph.add_conditional_edges("fetch_primary", _route_after_fetch)
+    graph.add_edge("extract_article_text", "compute_returns")
     # Always compute analysis when requested
     graph.add_edge("compute_returns", "compute_volatility")
     graph.add_edge("compute_volatility", "compute_sma")

@@ -23,9 +23,12 @@ def build_parser() -> argparse.ArgumentParser:
     # Mode selection
     p.add_argument(
         "--mode",
-        choices=["portfolio", "stock"],
+        choices=["portfolio", "stock", "extract-text"],
         default="portfolio",
-        help="Select 'portfolio' analysis or single 'stock' update",
+        help=(
+            "Select 'portfolio' analysis, single 'stock' update, "
+            "or 'extract-text' for article text extraction"
+        ),
     )
     p.add_argument("--ticker", help="Single stock ticker for --mode stock")
     p.add_argument("--instrument-id", help="Canonical instrument_id for --mode stock")
@@ -42,6 +45,30 @@ def build_parser() -> argparse.ArgumentParser:
         "--wavelet-level",
         type=int,
         help="Wavelet decomposition level J (1-8). Implies --wavelet when provided.",
+    )
+    p.add_argument(
+        "--fetch-news/--no-fetch-news",
+        dest="fetch_news",
+        default=None,
+        action=argparse.BooleanOptionalAction,
+        help="Fetch news articles when updating stock data (default: True)",
+    )
+    p.add_argument(
+        "--extract-text/--no-extract-text",
+        dest="extract_text",
+        default=None,
+        action=argparse.BooleanOptionalAction,
+        help="Extract text from HTML articles using Ollama (experimental, default: False)",
+    )
+    p.add_argument(
+        "--force-extraction",
+        action="store_true",
+        help="Force re-extraction of text even if already extracted",
+    )
+    p.add_argument(
+        "--all-stocks",
+        action="store_true",
+        help="Process all stocks (for extract-text mode)",
     )
 
     # Env overrides
@@ -119,6 +146,113 @@ def main(argv: list[str] | None = None) -> int:
         except Exception:
             pass
         return 0
+
+    if mode == "extract-text":
+        # Handle text extraction mode
+        all_stocks = overrides.pop("all_stocks", False)
+        force_extraction = overrides.pop("force_extraction", False)
+        if not all_stocks and not (ticker or instrument_id):
+            print(
+                "Error: --ticker, --instrument-id, or --all-stocks is required "
+                "when --mode extract-text",
+                file=sys.stderr,
+            )
+            return 1
+
+        try:
+            # Build settings and configure logging
+            settings = Settings(input_dir=input_dir, output_dir=output_dir, **overrides)
+            settings.ensure_directories()
+            configure_logging(
+                level=settings.log_level,
+                fmt=settings.log_format,
+                verbose=bool(settings.verbose),
+                agent_progress=bool(settings.agent_progress),
+                log_libraries=bool(getattr(settings, "log_libraries", False)),
+            )
+
+            from .services.ollama_service import OllamaService
+            from .stocks.article_extraction import ArticleTextExtractionService
+            from .stocks.db import StockPaths
+            from .utils.slug import instrument_id_to_slug
+
+            paths = StockPaths(root=(Path(settings.output_dir) / "stocks"))
+
+            with OllamaService(
+                base_url=settings.ollama_base_url, timeout_s=settings.ollama_timeout_s
+            ) as ollama:
+                extractor = ArticleTextExtractionService(
+                    paths=paths, ollama_service=ollama, model=settings.extraction_model
+                )
+
+                if all_stocks:
+                    # Extract for all stocks
+                    stats = extractor.extract_portfolio_articles(
+                        portfolio_path=Path(settings.output_dir),
+                        force=force_extraction,
+                        max_workers=settings.extraction_max_workers,
+                    )
+                    print(f"Processed {stats['processed_tickers']} tickers:")
+                    print(f"  Articles: {stats['total_articles']}")
+                    print(f"  Extracted: {stats['extracted']}")
+                    print(f"  Skipped: {stats['skipped']}")
+                    print(f"  Errors: {stats['errors']}")
+                else:
+                    # Extract for single ticker
+                    if ticker and not instrument_id:
+                        # Try to find existing instrument_id for this ticker
+                        tickers_root = paths.root / "tickers"
+                        if tickers_root.exists():
+                            for candidate in tickers_root.iterdir():
+                                if not candidate.is_dir():
+                                    continue
+                                meta_path = candidate / "meta.json"
+                                if not meta_path.exists():
+                                    continue
+                                import json as _json
+
+                                with meta_path.open("r", encoding="utf-8") as fh:
+                                    meta = _json.load(fh) or {}
+                                if (
+                                    str(meta.get("primary_ticker") or "").upper()
+                                    == str(ticker).upper()
+                                ):
+                                    instrument_id = meta.get("instrument_id")
+                                    break
+
+                    if not instrument_id:
+                        instrument_id = f"stocks/us/{ticker}"
+
+                    slug = instrument_id_to_slug(instrument_id)
+                    stats = extractor.extract_all_articles(
+                        ticker_slug=slug,
+                        force=force_extraction,
+                        batch_size=settings.extraction_batch_size,
+                    )
+                    print(f"Processed {ticker or instrument_id}:")
+                    print(f"  Articles: {stats['total_articles']}")
+                    print(f"  Extracted: {stats['extracted']}")
+                    print(f"  Skipped: {stats['skipped']}")
+                    print(f"  Errors: {stats['errors']}")
+
+        except Exception as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            try:
+                import logging as _logging
+
+                _logging.shutdown()
+            except Exception:
+                pass
+            return 1
+
+        try:
+            import logging as _logging
+
+            _logging.shutdown()
+        except Exception:
+            pass
+        return 0
+
     # mode == stock
     if not (ticker or instrument_id):
         print("Error: --ticker or --instrument-id is required when --mode stock", file=sys.stderr)
