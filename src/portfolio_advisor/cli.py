@@ -109,6 +109,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Force LLM calls to bypass cache lookup but write results to cache",
     )
+    p.add_argument(
+        "--include-news",
+        dest="include_news_report",
+        action="store_true",
+        help="Generate LLM-based 7d per-stock news+technical report",
+    )
 
     return p
 

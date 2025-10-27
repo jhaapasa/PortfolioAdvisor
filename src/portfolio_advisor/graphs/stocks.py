@@ -7,6 +7,8 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, StateGraph
 
+from ..agents.news_summary import summarize_news_node
+from ..agents.stock_report_collator import collate_report_node
 from ..config import Settings
 from ..models.canonical import InstrumentKey
 from ..services.ollama_service import OllamaService
@@ -619,6 +621,9 @@ def build_stocks_graph() -> Any:
     graph.add_node("compute_wavelet", _compute_wavelet_node)
     graph.add_node("commit_metadata", _commit_metadata_node)
     graph.add_node("render_report", _render_report_node)
+    # New LLM nodes for news summarization and final 7d report
+    graph.add_node("summarize_news", summarize_news_node)
+    graph.add_node("collate_report", collate_report_node)
 
     graph.set_entry_point("resolve_ticker")
     graph.add_edge("resolve_ticker", "check_db_state")
@@ -654,7 +659,16 @@ def build_stocks_graph() -> Any:
     # Wavelet is optional; run after SMA (node will check requested_artifacts)
     graph.add_edge("compute_sma", "compute_wavelet")
     graph.add_edge("compute_wavelet", "render_report")
-    graph.add_edge("render_report", "commit_metadata")
+
+    # Insert news summarization and report collation before commit metadata
+    def _route_after_render(state: StockState):
+        settings = state.get("settings")
+        include = bool(getattr(settings, "include_news_report", False))
+        return "summarize_news" if include else "commit_metadata"
+
+    graph.add_conditional_edges("render_report", _route_after_render)
+    graph.add_edge("summarize_news", "collate_report")
+    graph.add_edge("collate_report", "commit_metadata")
     graph.add_edge("commit_metadata", END)
     return graph.compile()
 
