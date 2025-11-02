@@ -56,6 +56,8 @@ class StockState(TypedDict, total=False):
     updates_needed: list[str]
     _slug: str
     _paths: Any
+    news_summary: dict  # {markdown: str, json: dict | None}
+    artifacts: dict  # {artifact_name: {paths, metadata}}
 
 
 _logger = logging.getLogger(__name__)
@@ -664,6 +666,11 @@ def build_stocks_graph() -> Any:
     def _route_after_render(state: StockState):
         settings = state.get("settings")
         include = bool(getattr(settings, "include_news_report", False))
+        _logger.info(
+            "stocks.route_after_render: include_news_report=%s -> %s",
+            include,
+            "summarize_news" if include else "commit_metadata",
+        )
         return "summarize_news" if include else "commit_metadata"
 
     graph.add_conditional_edges("render_report", _route_after_render)

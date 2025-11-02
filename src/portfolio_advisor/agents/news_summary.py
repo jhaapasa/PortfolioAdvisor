@@ -69,21 +69,35 @@ def summarize_news_node(state: dict) -> dict:
     ticker = (state.get("instrument") or {}).get("primary_ticker") or ""
     slug = state.get("_slug") or ""
     news_items: list[dict[str, Any]] = state.get("news_items") or []
+    logger.info(
+        "news_summary: ticker=%s slug=%s news_items_count=%d", ticker, slug, len(news_items)
+    )
 
     # If not provided by the graph, try to read recent 7d items from disk
     if (not news_items) and slug and state.get("_paths") is not None:
         try:
             paths = state.get("_paths")
             cache_path = paths.news_dir(slug) / "recent_7d.json"
+            logger.info("news_summary: attempting to load from %s", cache_path)
             if cache_path.exists():
                 with cache_path.open("r", encoding="utf-8") as fh:
                     doc = json.load(fh) or {}
                 news_items = list(doc.get("items") or [])
-        except Exception:  # pragma: no cover - defensive
+                logger.info("news_summary: loaded %d items from disk", len(news_items))
+            else:
+                logger.warning("news_summary: cache file does not exist: %s", cache_path)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("news_summary: failed to load from disk: %s", exc, exc_info=True)
             news_items = []
 
     if not ticker or not slug or not news_items:
         # Nothing to do
+        logger.warning(
+            "news_summary: skipping (ticker=%s slug=%s news_items=%d)",
+            bool(ticker),
+            bool(slug),
+            len(news_items),
+        )
         return state
 
     # Prepare prompt
@@ -122,13 +136,19 @@ def summarize_news_node(state: dict) -> dict:
         doc = json.loads(content)
         summary_json = doc
         summary_md = doc.get("highlights_markdown") or ""
+        logger.info("news_summary: parsed JSON output, markdown_length=%d", len(summary_md))
     except Exception:
         summary_json = None
         summary_md = content
+        logger.info("news_summary: using raw markdown output, length=%d", len(summary_md))
 
-    out = dict(state)
-    out["news_summary"] = {
+    news_summary_data = {
         "markdown": summary_md,
         "json": summary_json,
     }
-    return out
+    logger.info(
+        "news_summary: completed, returning news_summary to state (md_len=%d json=%s)",
+        len(summary_md),
+        summary_json is not None,
+    )
+    return {"news_summary": news_summary_data}

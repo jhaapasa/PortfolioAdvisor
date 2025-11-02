@@ -84,18 +84,26 @@ def collate_report_node(state: dict) -> dict:
     ticker = instrument.get("primary_ticker") or ""
     slug = state.get("_slug") or ""
     paths = state.get("_paths")
+    logger.info("collate_report: ticker=%s slug=%s paths=%s", ticker, slug, paths is not None)
     if not paths or not slug:
+        logger.warning("collate_report: missing paths or slug, skipping")
         return state
 
     include = bool(getattr(settings, "include_news_report", False))
+    logger.info("collate_report: include_news_report=%s", include)
     if not include:
+        logger.info("collate_report: skipping (include_news_report=False)")
         return state
 
     news = state.get("news_summary") or {}
     news_md = news.get("markdown") or ""
     news_json = news.get("json")
+    logger.info(
+        "collate_report: news_md length=%d news_json=%s", len(news_md), news_json is not None
+    )
     if not news_md and not news_json:
         # Nothing to collate
+        logger.warning("collate_report: no news summary to collate, skipping report generation")
         return state
 
     # Load existing analysis artifacts
@@ -157,9 +165,12 @@ def collate_report_node(state: dict) -> dict:
     except Exception:  # pragma: no cover - defensive
         logger.warning("collator: failed writing metrics.json", exc_info=True)
 
-    out = dict(state)
-    out.setdefault("artifacts", {})["news_report_7d"] = {
+    artifacts = (
+        state.get("artifacts", {}).copy() if isinstance(state.get("artifacts"), dict) else {}
+    )
+    artifacts["news_report_7d"] = {
         "report_path": str(report_path),
         "metrics_path": str(metrics_path),
     }
-    return out
+    logger.info("collate_report: completed, wrote report to %s", report_path)
+    return {"artifacts": artifacts}
