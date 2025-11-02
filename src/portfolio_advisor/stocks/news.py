@@ -74,6 +74,7 @@ class StockNewsService:
 
         try:
             # Fetch news from Polygon
+            recent_items: list[dict[str, Any]] = []
             for article in self.polygon_client.list_ticker_news(
                 ticker=ticker_symbol,
                 published_utc_gte=start_date.strftime("%Y-%m-%d"),
@@ -121,6 +122,23 @@ class StockNewsService:
                     "has_full_content": "local_content" in article_data,
                 }
 
+                # Accumulate for downstream in-memory usage (graph can consume)
+                try:
+                    # Preserve a small subset of fields to minimize token usage
+                    recent_items.append(
+                        {
+                            "id": article_data.get("id"),
+                            "title": article_data.get("title") or article_data.get("headline"),
+                            "summary": article_data.get("description")
+                            or article_data.get("summary"),
+                            "sentiment": article_data.get("sentiment"),
+                            "publisher": (article_data.get("publisher") or {}).get("name"),
+                            "published_utc": article_data.get("published_utc"),
+                        }
+                    )
+                except Exception:
+                    pass
+
         except Exception as e:
             logger.error(f"Error fetching news for {ticker_symbol}: {e}")
             stats["errors"].append(str(e))
@@ -129,6 +147,14 @@ class StockNewsService:
         index["last_updated"] = utcnow_iso()
         index["article_count"] = len(index["articles"])
         write_json_atomic(index_path, index)
+
+        # Write a compact recent-items cache for 7d window to support LLM summarization
+        try:
+            cache_path = news_dir / "recent_7d.json"
+            write_json_atomic(cache_path, {"items": recent_items, "window_days": days_back})
+        except Exception:
+            # best-effort auxiliary artifact
+            pass
 
         return stats
 

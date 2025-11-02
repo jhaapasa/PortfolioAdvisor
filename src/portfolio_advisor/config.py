@@ -72,6 +72,8 @@ class Settings(BaseSettings):
     wavelet: bool = Field(default=False, alias="WAVELET")
     wavelet_level: int = Field(default=5, alias="WAVELET_LEVEL")
     fetch_news: bool = Field(default=True, alias="FETCH_NEWS")
+    # Enable generating LLM-based 7d news + technical per-stock report
+    include_news_report: bool = Field(default=False, alias="INCLUDE_NEWS_REPORT")
 
     # Ollama configuration for article text extraction
     ollama_base_url: str = Field(default="http://localhost:11434", alias="OLLAMA_BASE_URL")

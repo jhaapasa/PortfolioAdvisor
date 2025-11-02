@@ -19,6 +19,7 @@
         "./output",
         "--wavelet-level",
         "6",
+        "--include-news",
         "--verbose",
         "--agent-progress"
       ],
@@ -47,6 +48,7 @@
         "AAPL",
         "--wavelet-level",
         "6",
+        "--include-news",
         "--verbose",
         "--agent-progress"
       ],
