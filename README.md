@@ -1,147 +1,170 @@
 # PortfolioAdvisor
 
-LangGraph-based, function-defined agents to analyze a portfolio and emit a minimal report.
+A LangGraph-based portfolio analysis tool using AI agents to parse, resolve, and analyze investment holdings from multiple data sources.
 
-See the architecture overview in `docs/Architecture.md` for a deeper dive.
+## Overview
+
+PortfolioAdvisor orchestrates a pipeline of specialized agents to:
+- **Ingest** portfolio data from CSV, text, or HTML files
+- **Parse** holdings using LLM-powered extraction
+- **Resolve** ticker symbols via the Polygon.io API
+- **Analyze** portfolio composition and generate reports
+- **Track** stock performance with historical data and technical indicators
+
+See `docs/Architecture.md` for the complete architecture overview.
 
 ## Quickstart
 
-1. Ensure Python 3.13.7 is available (e.g., via pyenv) and clone the repo.
-2. Create and activate a virtual environment and install deps:
+1. **Prerequisites:** Python 3.13.7 (e.g., via pyenv)
 
+2. **Clone and bootstrap:**
    ```bash
+   git clone https://github.com/jhaapasa/PortfolioAdvisor.git
+   cd PortfolioAdvisor
    ./scripts/bootstrap
    source .venv/bin/activate
    ```
 
-3. Set up environment variables for OpenAI and parser (optional for stub run):
+3. **Configure environment:**
+   - Copy `env.example` to `.env`
+   - Add your API keys:
+     - `OPENAI_API_KEY` (required for LLM features)
+     - `POLYGON_API_KEY` (optional, for symbol resolution and stock data)
 
-   - Copy `env.example` to `.env` and fill in values.
-
-4. Prepare an input directory with one or more files (e.g., `positions.csv`).
-
-5. Run the CLI:
-
+4. **Run the analyzer:**
    ```bash
-   portfolio-advisor --input-dir ./inputs --output-dir ./outputs --log-level INFO
+   portfolio-advisor --input-dir ./input --output-dir ./output
    ```
 
-The command prints the path to `analysis.md` in the output directory.
+   The tool generates `analysis.md` and supporting files in the output directory.
 
 ## Configuration
 
-Configuration is loaded from environment (and `.env` in development) and can be overridden on the CLI.
+Settings are loaded from environment variables (`.env` file in development) and can be overridden via CLI flags.
 
-- Required at runtime: `--input-dir`, `--output-dir`
-- OpenAI (optional for stub): `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `OPENAI_MODEL`
-- Tuning: `REQUEST_TIMEOUT_S`, `MAX_TOKENS`, `TEMPERATURE`
-- Logging: `LOG_LEVEL`, `LOG_FORMAT` (plain|json)
-- Parser (LLM Parsing Agent):
-  - `PARSER_MAX_RETRIES` (default 2)
-  - `PARSER_MAX_DOC_CHARS` (default 20000)
-  - Note: Parallelism is controlled at the LangGraph level via fan-out/fan-in; there are no per-parser concurrency/RPM knobs.
+### Required Settings
+- `--input-dir` — Directory containing portfolio data files
+- `--output-dir` — Directory for analysis output (created if needed)
 
-CLI overrides example:
+### API Keys
+- `OPENAI_API_KEY` — OpenAI API key (required for LLM features; stub mode if absent)
+- `POLYGON_API_KEY` — Polygon.io API key (optional; enables symbol resolution)
+
+### LLM Configuration
+- `OPENAI_MODEL` — Model name (default: `gpt-4o-mini`)
+- `OPENAI_BASE_URL` — Custom API endpoint (optional)
+- `TEMPERATURE` — Sampling temperature (default: `0.2`)
+- `MAX_TOKENS` — Max output tokens (optional)
+- `REQUEST_TIMEOUT_S` — Request timeout in seconds (default: `60`)
+
+### Parsing Settings
+- `PARSER_MAX_RETRIES` — Max retry attempts on validation errors (default: `2`)
+- `PARSER_MAX_DOC_CHARS` — Max characters per document (default: `20000`)
+
+### Logging
+- `LOG_LEVEL` — Logging verbosity: `DEBUG`, `INFO`, `WARNING`, etc. (default: `INFO`)
+- `LOG_FORMAT` — Format style: `plain` or `json` (default: `plain`)
+- `SKIP_LLM_CACHE` — Bypass LLM cache reads (writes still occur)
+
+### Example with CLI Overrides
 
 ```bash
 portfolio-advisor \
-  --input-dir ./inputs \
-  --output-dir ./outputs \
+  --input-dir ./input \
+  --output-dir ./output \
   --openai-model gpt-4o-mini \
   --temperature 0.2 \
-  --log-format json
+  --log-format json \
+  --parser-max-retries 3
 ```
 
-### Parser behavior
+## Features
 
-- The ingestion node extracts plain text from inputs.
-- The graph dispatches per-document parse tasks using LangGraph fan-out (Send), invoking a single-item parser for each doc in parallel.
-- Each call asks the model to emit JSON matching the schema for candidate holdings and retries up to `PARSER_MAX_RETRIES` on validation errors. Input text is truncated to `PARSER_MAX_DOC_CHARS`.
-- Results are reduced via additive state channels and then summarized by the analyst node.
+### Portfolio Analysis Pipeline
+- **Multi-format ingestion:** Reads CSV, TXT, HTML, Markdown, and email files
+- **LLM-powered parsing:** Extracts holdings with automatic retry on validation errors
+- **Symbol resolution:** Resolves tickers via Polygon.io with confidence scoring
+- **Canonical tracking:** Maintains normalized holdings with instrument keys
+- **Portfolio reports:** Generates summary analysis with holdings breakdown
 
-## CLI parameters
+### Stock Data & Analytics
+- **Historical OHLC data:** Daily price history via Polygon.io
+- **Technical indicators:** Returns (5/21/252-day), volatility (21-day annualized), SMAs (20/50/100/200-day)
+- **Wavelet analysis:** Multi-timescale signal decomposition for trend detection
+- **News integration:** Fetches and summarizes recent news articles per ticker
+- **Visual reports:** Generates candlestick charts with volume for Markdown embedding
 
-The `portfolio-advisor` CLI accepts the following parameters. All options can also be provided via environment variables by passing them through to the app entrypoint (see `env.example`).
-
-- `--input-dir` (required)
-  - Directory containing input files to analyze.
-  - No environment variable; must be provided via CLI.
-
-- `--output-dir` (required)
-  - Directory where outputs (e.g., `analysis.md`) will be written. Created if it does not exist.
-  - No environment variable; must be provided via CLI.
-
-- `--openai-api-key`
-  - API key for OpenAI.
-  - Env: `OPENAI_API_KEY`
-  - Default: empty (a stub LLM is used and returns placeholder text).
-
-- `--openai-base-url`
-  - Optional custom base URL for OpenAI-compatible API.
-  - Env: `OPENAI_BASE_URL`
-  - Default: empty (use library default).
-
-- `--openai-model`
-  - OpenAI model name.
-  - Env: `OPENAI_MODEL`
-  - Default: `gpt-4o-mini`.
-
-- `--request-timeout-s`
-  - Request timeout in seconds used by LLM calls.
-  - Env: `REQUEST_TIMEOUT_S`
-  - Default: `60`.
-
-- `--max-tokens`
-  - Maximum output tokens requested from the LLM. If unset, the model default is used.
-  - Env: `MAX_TOKENS`
-  - Default: empty/unset.
-
-- `--temperature`
-  - Sampling temperature for the LLM.
-  - Env: `TEMPERATURE`
-  - Default: `0.2`.
-
-- `--skip-llm-cache`
-  - Force LLM calls to bypass cache lookup but write results to the cache.
-  - Env: `SKIP_LLM_CACHE=1` has the same effect.
-  - Cache DB persists at `./cache/langchain_cache.sqlite3`.
-
-- `--log-level`
-  - Logging level (e.g., `DEBUG`, `INFO`, `WARNING`).
-  - Env: `LOG_LEVEL`
-  - Default: `INFO`.
-
-- `--log-format`
-  - Logging format: `plain` or `json`.
-  - Env: `LOG_FORMAT`
-  - Default: `plain`.
-
-### Parser-related CLI flags
-
-The following flags override the corresponding environment variables:
-
-- `--parser-max-retries` → `PARSER_MAX_RETRIES` (default 2)
-- `--parser-max-doc-chars` → `PARSER_MAX_DOC_CHARS` (default 20000)
-
-You can combine them with other CLI options, for example:
-
-```bash
-portfolio-advisor \
-  --input-dir ./inputs \
-  --output-dir ./outputs \
-  --parser-max-retries 3 \
-  --parser-max-doc-chars 5000
-```
+### Basket Analysis
+- **Basket persistence:** Tracks custom stock groupings with metadata
+- **Performance metrics:** Aggregates returns, volatility, and correlation across baskets
+- **Comparative analysis:** Identifies top performers and risk contributors
 
 ## Development
 
-- Lint: `./scripts/lint`
-- Format: `./scripts/format`
-- Test: `./scripts/test`
+### Setup
+After cloning the repository, run the bootstrap script to set up the development environment:
+```bash
+./scripts/bootstrap
+source .venv/bin/activate
+```
+
+### Development Workflow
+- **Format code:** `./scripts/format` — Applies Black formatting
+- **Lint code:** `./scripts/lint` — Runs Ruff linter
+- **Run tests:** `./scripts/test` — Executes pytest with coverage report
+- **Pre-commit:** Run all three commands before committing
+
+### Testing
+Tests are located in `tests/` and mirror the `src/` structure. Run with coverage:
+```bash
+source .venv/bin/activate
+pytest -q --cov=src/portfolio_advisor --cov-report=term-missing
+```
+
+Target: maintain >80% code coverage.
+
+### Architecture
+See `docs/Architecture.md` for detailed design documentation, including:
+- Agent orchestration flow (ingestion → parsing → resolution → analysis)
+- State management and LangGraph integration
+- Extension points for new providers and agents
+
+## Project Structure
+
+```
+PortfolioAdvisor/
+├── src/portfolio_advisor/     # Application source code
+│   ├── agents/                # LangGraph agent implementations
+│   ├── graphs/                # Multi-agent graph orchestration
+│   ├── models/                # Data models (parsed & canonical)
+│   ├── services/              # External API clients
+│   ├── stocks/                # Stock data and analysis modules
+│   └── tools/                 # Reusable utilities
+├── tests/                     # Unit and integration tests
+├── docs/                      # Technical documentation
+├── scripts/                   # Development tooling
+├── input/                     # Sample portfolio data
+└── output/                    # Generated reports and data
+```
 
 ## Logging and Error Handling
 
-- Logging defaults to INFO, plain format; switch to JSON via `LOG_FORMAT=json` or `--log-format json`.
-- Sensitive values (like API keys) are never logged.
-- Clear exceptions are raised for invalid inputs (missing directories, write failures) and configuration errors.
+- Logging defaults to `INFO` level with plain text format
+- Switch to JSON logs via `LOG_FORMAT=json` or `--log-format json`
+- Sensitive values (API keys, credentials) are never logged
+- Clear exceptions with context for configuration and I/O errors
+- LangGraph and LangChain library noise is suppressed by default
+
+## Documentation
+
+Detailed documentation is available in the `docs/` directory:
+- **Architecture.md** — System design and agent orchestration
+- **stock-analysis-plan.md** — Stock data collection and analysis strategy
+- **polygon-io-api-guide.md** — Comprehensive Polygon.io API reference
+- **Feature designs** — Detailed specs for baskets, news, and portfolio ingestion
+- **Wavelet analysis** — Research notes on multi-timescale signal decomposition
+
+## License
+
+MIT License — See `LICENSE` file for details.
 
