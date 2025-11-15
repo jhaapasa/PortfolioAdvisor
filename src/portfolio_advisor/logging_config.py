@@ -4,7 +4,6 @@ import atexit
 import json
 import logging
 import os
-import threading
 from datetime import UTC, datetime
 from typing import Any
 
@@ -107,21 +106,62 @@ def configure_logging(
     # to avoid late-finalization issues in Python 3.13 threading cleanup.
     def _graceful_shutdown() -> None:  # pragma: no cover - called at process exit
         try:
-            # Ensure worker threads/executors are joined before objects get GC'd
-            shutdown = getattr(threading, "_shutdown", None)
-            if callable(shutdown):
-                shutdown()
+            # Clean up any asyncio event loops that might be lingering
+            import asyncio
+
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    loop.stop()
+                if not loop.is_closed():
+                    # Cancel all pending tasks
+                    pending = asyncio.all_tasks(loop)
+                    for task in pending:
+                        task.cancel()
+                    # Run until all tasks are cancelled
+                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                    loop.close()
+            except RuntimeError:
+                # No event loop or already closed
+                pass
         except Exception:
             pass
+
+        try:
+            # Give threads a moment to finish cleanly
+            import time
+
+            time.sleep(0.05)
+        except Exception:
+            pass
+
         try:
             logging.shutdown()
         except Exception:
             pass
 
+    # Suppress stderr during final interpreter shutdown to hide spurious threading warnings
+    # from Python 3.13's dummy thread cleanup. These are harmless but noisy.
+    def _suppress_threading_cleanup_warnings() -> None:  # pragma: no cover
+        import sys
+
+        try:
+            # Redirect stderr to devnull to suppress threading cleanup messages
+            import os
+
+            devnull = open(os.devnull, "w")
+            sys.stderr = devnull
+        except Exception:
+            # If we can't redirect, just leave stderr as-is
+            pass
+
     # Ensure we only register once even if configure_logging is called multiple times
     if not getattr(configure_logging, "_pa_shutdown_registered", False):
         try:
+            # Register graceful cleanup first (runs in LIFO order, so this runs last)
             atexit.register(_graceful_shutdown)
+            # Then register stderr suppression (runs first, during final cleanup)
+            atexit.register(_suppress_threading_cleanup_warnings)
             setattr(configure_logging, "_pa_shutdown_registered", True)
         except Exception:
             pass

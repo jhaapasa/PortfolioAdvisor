@@ -5,6 +5,10 @@ from typing import Any, TypedDict
 
 from langgraph.graph import END, StateGraph
 
+from ..agents.basket_narrative import (
+    collect_ticker_news_summaries_node,
+    generate_basket_narrative_node,
+)
 from ..config import Settings
 from ..stocks.analysis import compute_trailing_returns
 from ..utils.fs import utcnow_iso
@@ -16,6 +20,8 @@ class BasketState(TypedDict, total=False):
     basket: dict
     _collected: dict
     metrics: dict
+    _ticker_news_summaries: list
+    narrative_md: str
     report_md: str
     basket_report: dict
 
@@ -52,16 +58,25 @@ def _collect_inputs_node(state: BasketState) -> dict:
     if not instruments:
         tickers = basket.get("tickers", []) or []
         if tickers:
+            # Create composite instrument IDs for ticker-only baskets
             instruments = [
-                {"instrument_id": None, "primary_ticker": str(t).strip()} for t in tickers if t
+                {
+                    "instrument_id": f"cid:stocks:us:composite:{str(t).strip()}",
+                    "primary_ticker": str(t).strip(),
+                }
+                for t in tickers
+                if t
             ]
     base = Path(s.output_dir) / "stocks" / "tickers"
     rows: list[dict[str, Any]] = []
     as_of = None
     for inst in instruments:
-        iid = str(inst.get("instrument_id") or "")
-        pt = str(inst.get("primary_ticker") or "")
-        slug = instrument_id_to_slug(iid) if iid else pt
+        iid = str(inst.get("instrument_id") or "").strip()
+        pt = str(inst.get("primary_ticker") or "").strip()
+        # Skip instruments without valid IDs (should not happen after above normalization)
+        if not iid:
+            continue
+        slug = instrument_id_to_slug(iid)
         ret_path = base / slug / "analysis" / "returns.json"
         d1 = None
         d5 = None
@@ -98,7 +113,7 @@ def _collect_inputs_node(state: BasketState) -> dict:
                 pass
         # Only include row if we have at least one metric
         if d1 is not None or d5 is not None:
-            rows.append({"instrument_id": iid or None, "primary_ticker": pt, "d1": d1, "d5": d5})
+            rows.append({"instrument_id": iid, "primary_ticker": pt, "d1": d1, "d5": d5})
     return {"_collected": {"rows": rows, "as_of": as_of, "slug": sl}}
 
 
@@ -122,6 +137,7 @@ def _compute_metrics_node(state: BasketState) -> dict:
     def _top(key: str, reverse: bool) -> list[str]:
         present = [r for r in rows if r.get(key) is not None]
         present.sort(key=lambda r: float(r[key]), reverse=reverse)
+        # Return instrument_ids (all are guaranteed to be valid, non-None)
         return [r["instrument_id"] for r in present[:3]]
 
     metrics = {
@@ -144,17 +160,80 @@ def _compute_metrics_node(state: BasketState) -> dict:
     return {"metrics": metrics}
 
 
-def _summarize_with_llm_node(state: BasketState) -> dict:
-    # Keep simple: format a small markdown summary without calling LLM for now
+def _format_report_node(state: BasketState) -> dict:
+    """Format the final basket report combining narrative and performance tables."""
     m = state["metrics"]
     label = m["basket"]["label"]
-    d1 = m["averages"].get("d1")
-    d5 = m["averages"].get("d5")
-    bullets = [
-        f"- {label} average d1: {d1:+.3%}" if d1 is not None else "- d1: n/a",
-        f"- {label} average d5: {d5:+.3%}" if d5 is not None else "- d5: n/a",
-    ]
-    report_md = "\n".join(bullets)
+    narrative = state.get("narrative_md", "")
+
+    # Build performance table
+    instruments = m.get("instruments", [])
+    d1_avg = m.get("averages", {}).get("d1")
+    d5_avg = m.get("averages", {}).get("d5")
+
+    parts = [f"# {label} - Basket Report\n"]
+
+    # Add narrative if available
+    if narrative:
+        parts.append(narrative)
+        parts.append("\n")
+
+    # Add performance summary
+    parts.append("## Performance Summary\n")
+    if d1_avg is not None:
+        parts.append(f"- Average 1-day return: **{d1_avg:+.2%}**")
+    if d5_avg is not None:
+        parts.append(f"- Average 5-day return: **{d5_avg:+.2%}**")
+    parts.append(f"- Holdings: {len(instruments)} instruments")
+
+    # Add top movers table
+    movers = m.get("top_movers", {})
+
+    def _find_instrument(instrument_id: str) -> dict:
+        """Find instrument by instrument_id."""
+        return next((i for i in instruments if i["instrument_id"] == instrument_id), {})
+
+    def _movers_table(up_key: str, down_key: str, period: str) -> str:
+        up_keys = movers.get(up_key, [])
+        down_keys = movers.get(down_key, [])
+        ret_key = "d1" if "d1" in up_key else "d5"
+
+        lines = [f"\n## Top Movers ({period})\n"]
+        lines.append("| Up | Return | Down | Return |")
+        lines.append("|---|---|---|---|")
+
+        for i in range(3):
+            up_ticker = ""
+            up_ret = ""
+            down_ticker = ""
+            down_ret = ""
+
+            if i < len(up_keys):
+                up_inst = _find_instrument(up_keys[i])
+                up_ticker = up_inst.get("primary_ticker", "")
+                up_val = up_inst.get(ret_key)
+                if up_val is not None:
+                    up_ret = f"{up_val:+.2%}"
+
+            if i < len(down_keys):
+                down_inst = _find_instrument(down_keys[i])
+                down_ticker = down_inst.get("primary_ticker", "")
+                down_val = down_inst.get(ret_key)
+                if down_val is not None:
+                    down_ret = f"{down_val:+.2%}"
+
+            lines.append(f"| {up_ticker} | {up_ret} | {down_ticker} | {down_ret} |")
+
+        return "\n".join(lines)
+
+    parts.append(_movers_table("d5_up", "d5_down", "5-Day"))
+
+    # Add metadata footer
+    as_of = m.get("as_of", "")
+    if as_of:
+        parts.append(f"\n---\n*As of {as_of}*")
+
+    report_md = "\n".join(parts)
     return {"report_md": report_md}
 
 
@@ -188,12 +267,16 @@ def build_basket_graph():
     graph = StateGraph(BasketState)
     graph.add_node("collect_inputs", _collect_inputs_node)
     graph.add_node("compute_metrics", _compute_metrics_node)
-    graph.add_node("summarize", _summarize_with_llm_node)
+    graph.add_node("collect_ticker_news", collect_ticker_news_summaries_node)
+    graph.add_node("generate_narrative", generate_basket_narrative_node)
+    graph.add_node("format_report", _format_report_node)
     graph.add_node("write_outputs", _write_outputs_node)
     graph.set_entry_point("collect_inputs")
     graph.add_edge("collect_inputs", "compute_metrics")
-    graph.add_edge("compute_metrics", "summarize")
-    graph.add_edge("summarize", "write_outputs")
+    graph.add_edge("compute_metrics", "collect_ticker_news")
+    graph.add_edge("collect_ticker_news", "generate_narrative")
+    graph.add_edge("generate_narrative", "format_report")
+    graph.add_edge("format_report", "write_outputs")
     graph.add_edge("write_outputs", END)
     return graph.compile()
 
