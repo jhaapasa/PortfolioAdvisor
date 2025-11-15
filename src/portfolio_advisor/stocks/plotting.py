@@ -90,8 +90,17 @@ def render_candlestick_ohlcv_1y(output_dir: Path, ohlc: dict[str, Any]) -> Path 
 
 
 def _create_coi_plot_segments(
-    series, coi_start: int, coi_end: int, color: str, width: float, alpha: float, panel: int = 0
-) -> list:
+    series,
+    coi_start: int,
+    coi_end: int,
+    color: str,
+    width: float,
+    alpha: float,
+    panel: int = 0,
+    level: int | None = None,
+    wavelet: str | None = None,
+    with_confidence: bool = False,
+) -> list | tuple[list, list]:
     """Create plot segments for a wavelet series with cone of influence visualization.
 
     Splits the series into reliable (solid line) and COI (dotted line) regions.
@@ -112,24 +121,44 @@ def _create_coi_plot_segments(
         Line opacity
     panel : int
         Panel number for mplfinance
+    level : int, optional
+        Wavelet decomposition level (required for confidence bands)
+    wavelet : str, optional
+        Wavelet family name (required for confidence bands)
+    with_confidence : bool
+        If True and level/wavelet provided, returns confidence band data
 
     Returns
     -------
-    list
-        List of mplfinance addplot objects (1-3 segments depending on COI boundaries)
+    list or tuple[list, list]
+        If with_confidence is False: List of mplfinance addplot objects
+        If with_confidence is True: Tuple of (addplot objects, confidence band data)
     """
     try:
         import mplfinance as mpf  # type: ignore
         import numpy as np
+
+        if with_confidence and level is not None and wavelet is not None:
+            from portfolio_advisor.stocks.coi_distortion_advanced import (
+                calculate_weighted_distortion,
+            )
     except Exception as exc:  # pragma: no cover - dependency missing
         raise RuntimeError("mplfinance is required for plotting") from exc
 
     plots = []
+    confidence_bands = []  # For storing confidence band data
     series_len = len(series)
 
     # Ensure boundaries are within valid range
     coi_start = max(0, min(coi_start, series_len))
     coi_end = max(coi_start, min(coi_end, series_len))
+
+    # Estimate signal standard deviation for error calculations if needed
+    signal_std = None
+    if with_confidence and level is not None:
+        # Use log returns for financial data
+        log_returns = np.log(series / series.shift(1)).dropna()
+        signal_std = log_returns.std() if len(log_returns) > 20 else 0.015  # Default 1.5%
 
     # Left COI region (dotted, more transparent)
     if coi_start > 0:
@@ -148,6 +177,35 @@ def _create_coi_plot_segments(
                     linestyle=":",
                 )
             )
+
+            # Calculate confidence bands if requested
+            if (
+                with_confidence
+                and level is not None
+                and wavelet is not None
+                and signal_std is not None
+            ):
+                bounds_upper = left_segment.copy()
+                bounds_lower = left_segment.copy()
+
+                for i in range(coi_start + 1):
+                    if left_segment.iloc[i] == left_segment.iloc[i]:  # Check for NaN
+                        distance_from_boundary = i
+                        _, worst_err, _ = calculate_weighted_distortion(
+                            distance_from_boundary, level, wavelet, signal_std**2
+                        )
+                        if worst_err > 0:
+                            bounds_upper.iloc[i] = left_segment.iloc[i] * np.exp(worst_err)
+                            bounds_lower.iloc[i] = left_segment.iloc[i] * np.exp(-worst_err)
+
+                confidence_bands.append(
+                    {
+                        "upper": bounds_upper,
+                        "lower": bounds_lower,
+                        "color": color,
+                        "alpha": 0.15,  # Light shading
+                    }
+                )
 
     # Reliable data region (solid line)
     if coi_end > coi_start:
@@ -182,6 +240,37 @@ def _create_coi_plot_segments(
                 )
             )
 
+            # Calculate confidence bands if requested
+            if (
+                with_confidence
+                and level is not None
+                and wavelet is not None
+                and signal_std is not None
+            ):
+                bounds_upper = right_segment.copy()
+                bounds_lower = right_segment.copy()
+
+                for i in range(coi_end - 1, series_len):
+                    if right_segment.iloc[i] == right_segment.iloc[i]:  # Check for NaN
+                        distance_from_boundary = series_len - 1 - i
+                        _, worst_err, _ = calculate_weighted_distortion(
+                            distance_from_boundary, level, wavelet, signal_std**2
+                        )
+                        if worst_err > 0:
+                            bounds_upper.iloc[i] = right_segment.iloc[i] * np.exp(worst_err)
+                            bounds_lower.iloc[i] = right_segment.iloc[i] * np.exp(-worst_err)
+
+                confidence_bands.append(
+                    {
+                        "upper": bounds_upper,
+                        "lower": bounds_lower,
+                        "color": color,
+                        "alpha": 0.15,  # Light shading
+                    }
+                )
+
+    if with_confidence:
+        return plots, confidence_bands
     return plots
 
 
@@ -310,10 +399,31 @@ def render_candlestick_ohlcv_2y_wavelet_trends(
                     # Use COI visualization if boundaries are available
                     if key in coi_boundaries:
                         coi_start, coi_end = coi_boundaries[key]
-                        coi_plots = _create_coi_plot_segments(
-                            s, coi_start, coi_end, color, width, alpha, panel=0
-                        )
-                        addplots.extend(coi_plots)
+                        # For S6, add confidence bands
+                        if key == "S6" and "wavelet" in meta:
+                            result = _create_coi_plot_segments(
+                                s,
+                                coi_start,
+                                coi_end,
+                                color,
+                                width,
+                                alpha,
+                                panel=0,
+                                level=6,
+                                wavelet=meta.get("wavelet", "sym4"),
+                                with_confidence=True,
+                            )
+                            coi_plots, conf_bands = result
+                            addplots.extend(coi_plots)
+                            # Store confidence bands for later processing
+                            if not hasattr(_create_coi_plot_segments, "_confidence_bands"):
+                                _create_coi_plot_segments._confidence_bands = []
+                            _create_coi_plot_segments._confidence_bands.extend(conf_bands)
+                        else:
+                            coi_plots = _create_coi_plot_segments(
+                                s, coi_start, coi_end, color, width, alpha, panel=0
+                            )
+                            addplots.extend(coi_plots)
                     else:
                         # Fallback to simple line if no COI data
                         ap = mpf.make_addplot(
@@ -443,6 +553,44 @@ def render_candlestick_ohlcv_2y_wavelet_trends(
                         )
                     except Exception:  # pragma: no cover - legend is optional
                         _logger.debug("Failed to add legend to wavelet trends plot", exc_info=True)
+
+                # Add confidence bands if they were collected
+                if hasattr(_create_coi_plot_segments, "_confidence_bands"):
+                    try:
+                        import numpy as np
+
+                        # Get the main price axis
+                        ax = _axes[0] if isinstance(_axes, list | tuple) else _axes
+
+                        # Apply confidence bands
+                        for band_data in _create_coi_plot_segments._confidence_bands:
+                            upper = band_data["upper"].reindex(tail.index)
+                            lower = band_data["lower"].reindex(tail.index)
+
+                            # Find valid (non-NaN) regions
+                            valid_mask = upper.notna() & lower.notna()
+                            if valid_mask.sum() > 0:
+                                # Get x positions (mplfinance uses integer positions)
+                                x_positions = np.arange(len(tail))
+
+                                # Fill between the bounds
+                                ax.fill_between(
+                                    x_positions[valid_mask],
+                                    lower[valid_mask].values,
+                                    upper[valid_mask].values,
+                                    color=band_data["color"],
+                                    alpha=band_data["alpha"],
+                                    linewidth=0,
+                                    zorder=1,  # Behind the lines
+                                )
+
+                        # Clean up the temporary storage
+                        del _create_coi_plot_segments._confidence_bands
+                    except Exception:  # pragma: no cover - confidence bands are optional
+                        _logger.debug("Failed to add confidence bands", exc_info=True)
+                        # Clean up on error
+                        if hasattr(_create_coi_plot_segments, "_confidence_bands"):
+                            del _create_coi_plot_segments._confidence_bands
 
                 fig.savefig(str(out_path), dpi=150, bbox_inches="tight")
         finally:
