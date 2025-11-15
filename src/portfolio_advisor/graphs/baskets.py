@@ -58,16 +58,25 @@ def _collect_inputs_node(state: BasketState) -> dict:
     if not instruments:
         tickers = basket.get("tickers", []) or []
         if tickers:
+            # Create composite instrument IDs for ticker-only baskets
             instruments = [
-                {"instrument_id": None, "primary_ticker": str(t).strip()} for t in tickers if t
+                {
+                    "instrument_id": f"cid:stocks:us:composite:{str(t).strip()}",
+                    "primary_ticker": str(t).strip(),
+                }
+                for t in tickers
+                if t
             ]
     base = Path(s.output_dir) / "stocks" / "tickers"
     rows: list[dict[str, Any]] = []
     as_of = None
     for inst in instruments:
-        iid = str(inst.get("instrument_id") or "")
-        pt = str(inst.get("primary_ticker") or "")
-        slug = instrument_id_to_slug(iid) if iid else pt
+        iid = str(inst.get("instrument_id") or "").strip()
+        pt = str(inst.get("primary_ticker") or "").strip()
+        # Skip instruments without valid IDs (should not happen after above normalization)
+        if not iid:
+            continue
+        slug = instrument_id_to_slug(iid)
         ret_path = base / slug / "analysis" / "returns.json"
         d1 = None
         d5 = None
@@ -104,7 +113,7 @@ def _collect_inputs_node(state: BasketState) -> dict:
                 pass
         # Only include row if we have at least one metric
         if d1 is not None or d5 is not None:
-            rows.append({"instrument_id": iid or None, "primary_ticker": pt, "d1": d1, "d5": d5})
+            rows.append({"instrument_id": iid, "primary_ticker": pt, "d1": d1, "d5": d5})
     return {"_collected": {"rows": rows, "as_of": as_of, "slug": sl}}
 
 
@@ -128,6 +137,7 @@ def _compute_metrics_node(state: BasketState) -> dict:
     def _top(key: str, reverse: bool) -> list[str]:
         present = [r for r in rows if r.get(key) is not None]
         present.sort(key=lambda r: float(r[key]), reverse=reverse)
+        # Return instrument_ids (all are guaranteed to be valid, non-None)
         return [r["instrument_id"] for r in present[:3]]
 
     metrics = {
@@ -178,11 +188,14 @@ def _format_report_node(state: BasketState) -> dict:
 
     # Add top movers table
     movers = m.get("top_movers", {})
-    instruments_by_id = {i["instrument_id"]: i for i in instruments}
+
+    def _find_instrument(instrument_id: str) -> dict:
+        """Find instrument by instrument_id."""
+        return next((i for i in instruments if i["instrument_id"] == instrument_id), {})
 
     def _movers_table(up_key: str, down_key: str, period: str) -> str:
-        up_ids = movers.get(up_key, [])
-        down_ids = movers.get(down_key, [])
+        up_keys = movers.get(up_key, [])
+        down_keys = movers.get(down_key, [])
         ret_key = "d1" if "d1" in up_key else "d5"
 
         lines = [f"\n## Top Movers ({period})\n"]
@@ -195,15 +208,15 @@ def _format_report_node(state: BasketState) -> dict:
             down_ticker = ""
             down_ret = ""
 
-            if i < len(up_ids):
-                up_inst = instruments_by_id.get(up_ids[i], {})
+            if i < len(up_keys):
+                up_inst = _find_instrument(up_keys[i])
                 up_ticker = up_inst.get("primary_ticker", "")
                 up_val = up_inst.get(ret_key)
                 if up_val is not None:
                     up_ret = f"{up_val:+.2%}"
 
-            if i < len(down_ids):
-                down_inst = instruments_by_id.get(down_ids[i], {})
+            if i < len(down_keys):
+                down_inst = _find_instrument(down_keys[i])
                 down_ticker = down_inst.get("primary_ticker", "")
                 down_val = down_inst.get(ret_key)
                 if down_val is not None:

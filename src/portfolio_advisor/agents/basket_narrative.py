@@ -52,14 +52,18 @@ def _build_narrative_prompt(
 
     # Top movers
     movers = metrics.get("top_movers", {})
-    instruments = {i["instrument_id"]: i for i in metrics.get("instruments", [])}
+    instruments_list = metrics.get("instruments", [])
+
+    def _find_instrument(instrument_id: str) -> dict:
+        """Find instrument by instrument_id."""
+        return next((i for i in instruments_list if i["instrument_id"] == instrument_id), {})
 
     def _format_movers(key: str, label: str) -> str:
-        ids = movers.get(key, [])
+        keys = movers.get(key, [])
         lines = [f"\n{label}:"]
-        for iid in ids[:3]:
-            inst = instruments.get(iid, {})
-            ticker = inst.get("primary_ticker", iid)
+        for k in keys[:3]:
+            inst = _find_instrument(k)
+            ticker = inst.get("primary_ticker", k or "")
             ret_key = "d1" if "d1" in key else "d5"
             ret_val = inst.get(ret_key)
             if ret_val is not None:

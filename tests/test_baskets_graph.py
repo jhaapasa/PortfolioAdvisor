@@ -105,3 +105,76 @@ Sentiment Overview (7d)
     assert metrics["basket"]["id"] == "test_basket"
     assert "averages" in metrics
     assert "top_movers" in metrics
+
+
+def test_baskets_with_ticker_only_definitions(tmp_path: Path):
+    """Test that ticker-only baskets get proper composite instrument IDs."""
+    out_dir = tmp_path / "out"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Create multiple tickers with different returns
+    # When defined with tickers only, they should get composite IDs
+    base = out_dir / "stocks" / "tickers"
+    tickers_data = [
+        ("AAPL", 0.05, 0.10),  # Top gainer
+        ("TSLA", 0.02, 0.04),  # Mid performer
+        ("NVDA", -0.01, -0.03),  # Top loser
+        ("AMD", 0.01, 0.02),  # Another performer
+    ]
+
+    # Create data under composite ID slugs since that's what basket will use
+    for ticker, d1, d5 in tickers_data:
+        # Composite ID: cid:stocks:us:composite:TICKER -> cid-stocks-us-composite-{ticker}
+        slug = f"cid-stocks-us-composite-{ticker.lower()}"
+        tdir = base / slug / "analysis"
+        tdir.mkdir(parents=True, exist_ok=True)
+        returns_content = {
+            "primary_ticker": ticker,
+            "as_of": "2025-11-01",
+            "windows": {"d1": d1, "d5": d5},
+        }
+        (tdir / "returns.json").write_text(json.dumps(returns_content), encoding="utf-8")
+
+    settings = Settings(input_dir=str(tmp_path), output_dir=str(out_dir))
+    compiled = build_basket_graph()
+    state = {
+        "settings": settings,
+        "basket": {
+            "id": "ticker_only_basket",
+            "label": "Ticker Only Basket",
+            "slug": "ticker-only-basket",
+            "tickers": [t for t, _, _ in tickers_data],  # Ticker-only definition
+        },
+    }
+    out = compiled.invoke(state)
+
+    # Verify metrics were computed correctly
+    metrics_path = Path(out["basket_report"]["metrics_path"])
+    metrics = json.loads(metrics_path.read_text(encoding="utf-8"))
+
+    # Verify all instruments have proper composite IDs (not None)
+    instruments = metrics["instruments"]
+    assert len(instruments) == 4
+    for inst in instruments:
+        iid = inst["instrument_id"]
+        assert iid is not None
+        assert iid.startswith("cid:stocks:us:composite:")
+        # Verify instrument_id matches the ticker
+        ticker = inst["primary_ticker"]
+        assert iid == f"cid:stocks:us:composite:{ticker}"
+
+    # Verify top movers include correct instrument IDs
+    top_movers = metrics["top_movers"]
+    assert len(top_movers["d5_up"]) == 3  # Should have 3 upward movers
+    assert len(top_movers["d5_down"]) == 3  # Should have 3 downward movers
+    # Top movers should contain instrument IDs, not None
+    for mover_id in top_movers["d5_up"] + top_movers["d5_down"]:
+        assert mover_id is not None
+        assert mover_id.startswith("cid:stocks:us:composite:")
+
+    # Read the report and verify all tickers appear
+    report_path = Path(out["basket_report"]["report_path"])
+    report_text = report_path.read_text(encoding="utf-8")
+    assert "AAPL" in report_text  # Top gainer should appear
+    assert "NVDA" in report_text  # Top loser should appear
+    assert "Top Movers" in report_text
