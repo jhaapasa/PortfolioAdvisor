@@ -203,7 +203,10 @@ def _create_coi_plot_segments(
                         "upper": bounds_upper,
                         "lower": bounds_lower,
                         "color": color,
-                        "alpha": 0.15,  # Light shading
+                        "alpha": 0.25,  # Increased visibility
+                        "is_left": True,  # Track which side for gradient
+                        "coi_start": coi_start,
+                        "series_len": series_len,
                     }
                 )
 
@@ -265,7 +268,10 @@ def _create_coi_plot_segments(
                         "upper": bounds_upper,
                         "lower": bounds_lower,
                         "color": color,
-                        "alpha": 0.15,  # Light shading
+                        "alpha": 0.25,  # Increased visibility
+                        "is_left": False,  # Track which side for gradient
+                        "coi_end": coi_end,
+                        "series_len": series_len,
                     }
                 )
 
@@ -562,7 +568,7 @@ def render_candlestick_ohlcv_2y_wavelet_trends(
                         # Get the main price axis
                         ax = _axes[0] if isinstance(_axes, list | tuple) else _axes
 
-                        # Apply confidence bands
+                        # Apply confidence bands with gradient effect
                         for band_data in _create_coi_plot_segments._confidence_bands:
                             upper = band_data["upper"].reindex(tail.index)
                             lower = band_data["lower"].reindex(tail.index)
@@ -572,17 +578,115 @@ def render_candlestick_ohlcv_2y_wavelet_trends(
                             if valid_mask.sum() > 0:
                                 # Get x positions (mplfinance uses integer positions)
                                 x_positions = np.arange(len(tail))
+                                valid_x = x_positions[valid_mask]
 
-                                # Fill between the bounds
-                                ax.fill_between(
-                                    x_positions[valid_mask],
-                                    lower[valid_mask].values,
-                                    upper[valid_mask].values,
-                                    color=band_data["color"],
-                                    alpha=band_data["alpha"],
-                                    linewidth=0,
-                                    zorder=1,  # Behind the lines
-                                )
+                                # Create gradient alpha based on distance from COI boundary
+                                # This makes the bands more visible at the edges
+                                base_alpha = band_data["alpha"]
+
+                                if band_data.get("is_left", True):
+                                    # Left side: alpha increases as we approach edge (index 0)
+                                    # Scale alpha from base_alpha to 2*base_alpha
+                                    coi_start = band_data.get("coi_start", 224)
+                                    alphas = np.array(
+                                        [
+                                            base_alpha * (1 + (coi_start - x) / coi_start)
+                                            for x in valid_x
+                                        ]
+                                    )
+                                else:
+                                    # Right side: alpha increases as we approach edge
+                                    coi_end = band_data.get("coi_end", 280)
+                                    series_len = band_data.get("series_len", 504)
+                                    alphas = np.array(
+                                        [
+                                            base_alpha
+                                            * (1 + (x - coi_end) / (series_len - coi_end))
+                                            for x in valid_x
+                                        ]
+                                    )
+
+                                # Clip alphas to reasonable range
+                                alphas = np.clip(alphas, base_alpha, base_alpha * 2)
+
+                                # Plot segments with varying alpha
+                                # We'll use a simple approach: darker shading at edges
+                                for i in range(len(valid_x) - 1):
+                                    ax.fill_between(
+                                        [valid_x[i], valid_x[i + 1]],
+                                        [
+                                            lower[valid_mask].values[i],
+                                            lower[valid_mask].values[i + 1],
+                                        ],
+                                        [
+                                            upper[valid_mask].values[i],
+                                            upper[valid_mask].values[i + 1],
+                                        ],
+                                        color=band_data["color"],
+                                        alpha=alphas[i],
+                                        linewidth=0,
+                                        zorder=1,  # Behind the lines
+                                    )
+
+                                # Add discrete error bars at key points for clarity
+                                # Show error bars every 50 samples in COI regions
+                                marker_indices = []
+                                if band_data.get("is_left", True):
+                                    # Left side markers: 0, 50, 100, 150, 200
+                                    coi_start = band_data.get("coi_start", 224)
+                                    marker_indices = [
+                                        i for i in range(0, coi_start, 50) if i in valid_x
+                                    ]
+                                else:
+                                    # Right side markers: spaced from coi_end
+                                    coi_end = band_data.get("coi_end", 280)
+                                    series_len = band_data.get("series_len", 504)
+                                    marker_indices = [
+                                        i for i in range(coi_end, series_len, 50) if i in valid_x
+                                    ]
+                                    # Also add the last point
+                                    if series_len - 1 in valid_x:
+                                        marker_indices.append(series_len - 1)
+
+                                # Draw error bars at marker positions
+                                for idx in marker_indices:
+                                    if idx in valid_x:
+                                        x_idx = np.where(valid_x == idx)[0][0]
+                                        ax.plot(
+                                            [idx, idx],
+                                            [
+                                                lower[valid_mask].values[x_idx],
+                                                upper[valid_mask].values[x_idx],
+                                            ],
+                                            color=band_data["color"],
+                                            alpha=0.7,
+                                            linewidth=2,
+                                            zorder=2,  # Above the fill
+                                        )
+                                        # Add small horizontal caps on error bars
+                                        cap_width = 1
+                                        ax.plot(
+                                            [idx - cap_width / 2, idx + cap_width / 2],
+                                            [
+                                                lower[valid_mask].values[x_idx],
+                                                lower[valid_mask].values[x_idx],
+                                            ],
+                                            color=band_data["color"],
+                                            alpha=0.7,
+                                            linewidth=1,
+                                            zorder=2,
+                                        )
+                                        ax.plot(
+                                            [idx - cap_width / 2, idx + cap_width / 2],
+                                            [
+                                                upper[valid_mask].values[x_idx],
+                                                upper[valid_mask].values[x_idx],
+                                            ],
+                                            color=band_data["color"],
+                                            alpha=0.7,
+                                            linewidth=1,
+                                            zorder=2,
+                                        )
 
                         # Clean up the temporary storage
                         del _create_coi_plot_segments._confidence_bands
