@@ -120,6 +120,7 @@ def _create_coi_plot_segments(
     """
     try:
         import mplfinance as mpf  # type: ignore
+        import numpy as np
     except Exception as exc:  # pragma: no cover - dependency missing
         raise RuntimeError("mplfinance is required for plotting") from exc
 
@@ -132,7 +133,9 @@ def _create_coi_plot_segments(
 
     # Left COI region (dotted, more transparent)
     if coi_start > 0:
-        left_segment = series.iloc[: coi_start + 1].copy()
+        # Create full-length series with NaN outside the segment
+        left_segment = series.copy()
+        left_segment.iloc[coi_start + 1 :] = np.nan
         # Only plot if we have valid data
         if left_segment.notna().sum() > 0:
             plots.append(
@@ -148,7 +151,9 @@ def _create_coi_plot_segments(
 
     # Reliable data region (solid line)
     if coi_end > coi_start:
-        reliable_segment = series.iloc[coi_start:coi_end].copy()
+        reliable_segment = series.copy()
+        reliable_segment.iloc[:coi_start] = np.nan
+        reliable_segment.iloc[coi_end:] = np.nan
         if reliable_segment.notna().sum() > 0:
             plots.append(
                 mpf.make_addplot(
@@ -163,7 +168,8 @@ def _create_coi_plot_segments(
 
     # Right COI region (dotted, more transparent)
     if coi_end < series_len:
-        right_segment = series.iloc[coi_end - 1 :].copy()
+        right_segment = series.copy()
+        right_segment.iloc[: coi_end - 1] = np.nan
         if right_segment.notna().sum() > 0:
             plots.append(
                 mpf.make_addplot(
