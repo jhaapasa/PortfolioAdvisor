@@ -548,13 +548,15 @@ def _compute_wavelet_node(state: StockState) -> dict:
         price_coeffs_doc["generated_at"] = utcnow_iso()
         _write_json(paths.analysis_wavelet_coeffs_logprice_json(slug), price_coeffs_doc)
 
-        recon_dates, recon_map, recon_meta = reconstruct_logprice_series(
+        recon_dates, recon_map, recon_meta, coi_boundaries = reconstruct_logprice_series(
             dates=dates,
             closes=closes,
             level=int(getattr(settings, "wavelet_level", 5)),
             wavelet="sym4",
             max_level=6,  # Use consistent max level for MRA consistency
         )
+        # Add COI boundaries to metadata for downstream use
+        recon_meta["coi_boundaries"] = {k: list(v) for k, v in coi_boundaries.items()}
         recon_doc = to_reconstructed_prices_json(
             ticker=slug, dates=recon_dates, recon=recon_map, meta=recon_meta
         )

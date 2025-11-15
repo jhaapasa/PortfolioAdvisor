@@ -89,6 +89,96 @@ def render_candlestick_ohlcv_1y(output_dir: Path, ohlc: dict[str, Any]) -> Path 
     return out_path
 
 
+def _create_coi_plot_segments(
+    series, coi_start: int, coi_end: int, color: str, width: float, alpha: float, panel: int = 0
+) -> list:
+    """Create plot segments for a wavelet series with cone of influence visualization.
+
+    Splits the series into reliable (solid line) and COI (dotted line) regions.
+
+    Parameters
+    ----------
+    series : pandas.Series
+        The time series data to plot (indexed by date)
+    coi_start : int
+        Start index of reliable data region (0-based)
+    coi_end : int
+        End index of reliable data region (exclusive)
+    color : str
+        Line color
+    width : float
+        Line width
+    alpha : float
+        Line opacity
+    panel : int
+        Panel number for mplfinance
+
+    Returns
+    -------
+    list
+        List of mplfinance addplot objects (1-3 segments depending on COI boundaries)
+    """
+    try:
+        import mplfinance as mpf  # type: ignore
+    except Exception as exc:  # pragma: no cover - dependency missing
+        raise RuntimeError("mplfinance is required for plotting") from exc
+
+    plots = []
+    series_len = len(series)
+
+    # Ensure boundaries are within valid range
+    coi_start = max(0, min(coi_start, series_len))
+    coi_end = max(coi_start, min(coi_end, series_len))
+
+    # Left COI region (dotted, more transparent)
+    if coi_start > 0:
+        left_segment = series.iloc[: coi_start + 1].copy()
+        # Only plot if we have valid data
+        if left_segment.notna().sum() > 0:
+            plots.append(
+                mpf.make_addplot(
+                    left_segment,
+                    panel=panel,
+                    color=color,
+                    width=width,
+                    alpha=alpha * 0.6,
+                    linestyle=":",
+                )
+            )
+
+    # Reliable data region (solid line)
+    if coi_end > coi_start:
+        reliable_segment = series.iloc[coi_start:coi_end].copy()
+        if reliable_segment.notna().sum() > 0:
+            plots.append(
+                mpf.make_addplot(
+                    reliable_segment,
+                    panel=panel,
+                    color=color,
+                    width=width,
+                    alpha=alpha,
+                    linestyle="-",
+                )
+            )
+
+    # Right COI region (dotted, more transparent)
+    if coi_end < series_len:
+        right_segment = series.iloc[coi_end - 1 :].copy()
+        if right_segment.notna().sum() > 0:
+            plots.append(
+                mpf.make_addplot(
+                    right_segment,
+                    panel=panel,
+                    color=color,
+                    width=width,
+                    alpha=alpha * 0.6,
+                    linestyle=":",
+                )
+            )
+
+    return plots
+
+
 def render_candlestick_ohlcv_2y_wavelet_trends(
     output_dir: Path, ohlc: dict[str, Any], recon_doc: dict[str, Any] | None
 ) -> Path | None:
@@ -127,6 +217,12 @@ def render_candlestick_ohlcv_2y_wavelet_trends(
 
         recon_all = (recon_doc.get("reconstructions") or {}) if isinstance(recon_doc, dict) else {}
         meta = recon_doc.get("metadata") or {}
+        # Extract COI boundaries from metadata if available
+        coi_boundaries_raw = meta.get("coi_boundaries") or {}
+        coi_boundaries = (
+            {k: tuple(v) for k, v in coi_boundaries_raw.items()} if coi_boundaries_raw else {}
+        )
+
         # Determine J from metadata or infer from available keys (highest S?)
         J = None
         try:
@@ -205,14 +301,23 @@ def render_candlestick_ohlcv_2y_wavelet_trends(
                     legend_label = f"S_{k} ({day_range})"
                     legend_labels.append(legend_label)
 
-                    ap = mpf.make_addplot(
-                        s,
-                        panel=0,
-                        color=color,
-                        width=width,
-                        alpha=alpha,
-                    )
-                    addplots.append(ap)
+                    # Use COI visualization if boundaries are available
+                    if key in coi_boundaries:
+                        coi_start, coi_end = coi_boundaries[key]
+                        coi_plots = _create_coi_plot_segments(
+                            s, coi_start, coi_end, color, width, alpha, panel=0
+                        )
+                        addplots.extend(coi_plots)
+                    else:
+                        # Fallback to simple line if no COI data
+                        ap = mpf.make_addplot(
+                            s,
+                            panel=0,
+                            color=color,
+                            width=width,
+                            alpha=alpha,
+                        )
+                        addplots.append(ap)
                 except Exception:  # pragma: no cover - robust to bad data
                     _logger.debug(
                         "plotting.overlay.skip: failed to build S-level series for %s",
@@ -311,6 +416,20 @@ def render_candlestick_ohlcv_2y_wavelet_trends(
                             color = colors[i % len(colors)]
                             line = mlines.Line2D([], [], color=color, linewidth=2, label=label)
                             legend_elements.append(line)
+
+                        # Add COI indicator if boundaries are present
+                        if coi_boundaries:
+                            # Add a dotted line to indicate COI regions
+                            coi_line = mlines.Line2D(
+                                [],
+                                [],
+                                color="gray",
+                                linewidth=1.5,
+                                linestyle=":",
+                                alpha=0.6,
+                                label="COI region (boundary effects)",
+                            )
+                            legend_elements.append(coi_line)
 
                         # Add legend in upper left corner
                         ax.legend(
