@@ -1,4 +1,6 @@
-# Confidence Bands for S6 Wavelet Trend in COI Regions
+# Confidence Bands for S6 Wavelet Trend in COI Regions (Removed)
+
+**Note: This feature was removed in favor of simpler COI visualization using dotted lines. The documentation is kept for reference.**
 
 ## Overview
 
