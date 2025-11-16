@@ -78,6 +78,38 @@ These provide theoretical foundation and can be used for:
 - Creating more sophisticated visualizations in the future
 - Understanding the true impact of boundary effects
 
+## Paths Not Taken
+
+### Confidence Bands with Error Estimates
+- **What**: Initially implemented confidence bands showing worst-case price deviation using filter-weighted distortion
+- **Why Removed**: Too subtle on full price charts, didn't add enough clarity
+- **Details**: Bands varied from ±2.48% at edges to ±0.39% at COI boundary
+- **Decision**: Simpler dotted/solid line approach more effective
+- **Code**: Advanced distortion calculations remain in `coi_distortion_advanced.py` for future use
+
+### Color Gradient for Distortion Levels
+- **What**: Use color gradient (blue→green→yellow→red) to show reliability
+- **Why Not**: Visual complexity outweighed benefits
+- **Alternative Considered**: Alpha transparency gradient
+- **Decision**: Binary dotted/solid sufficient and clearer
+
+### Multiple COI Visualization Methods
+- **What**: Support for linear, exponential, and filter-support distortion models
+- **Why Not**: Three models would confuse users
+- **Implemented**: All three models available in code
+- **Used**: Traditional COI (simplest, most established)
+- **Rationale**: Start simple, can expose advanced models later if needed
+
+### Configurable COI Thresholds
+- **What**: Allow users to set custom distortion tolerance
+- **Why Not**: Premature optimization, no user request yet
+- **Future**: Could add if needed
+
+### Adaptive COI by Analysis Type
+- **What**: Different COI handling for different wavelet applications
+- **Why Not**: Adds complexity, unclear benefit
+- **Example**: Tighter COI for trading signals, looser for trend visualization
+
 ## Status
 
 ✅ All work has been committed and pushed to remote repository
@@ -86,3 +118,28 @@ These provide theoretical foundation and can be used for:
 ✅ Documentation complete
 
 The feature is ready for review and merge.
+
+## TODO: Future Improvements
+
+### High Priority
+- [ ] Add COI threshold configuration option (if users request it)
+- [ ] Expose distortion percentage in plot tooltips (if we add interactive plots)
+- [ ] Document when to use each distortion model
+
+### Medium Priority
+- [ ] Add COI annotations directly on plots (labels showing regions)
+- [ ] Implement color coding for different distortion levels (subtle version)
+- [ ] Create utility function to query distortion at any point
+- [ ] Add COI visualization to other wavelet-based charts
+
+### Low Priority
+- [ ] Confidence bands as optional overlay (not default)
+- [ ] Export COI boundaries as data (not just visualization)
+- [ ] COI-aware analysis masks (automatically exclude unreliable regions)
+- [ ] Comparative visualization of different COI models
+
+### Research
+- [ ] User study: Do dotted lines effectively communicate uncertainty?
+- [ ] Investigate adaptive COI based on signal characteristics
+- [ ] Compare filter-weighted vs traditional COI in practice
+- [ ] Explore real-time COI updates for streaming data
