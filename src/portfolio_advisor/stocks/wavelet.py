@@ -52,6 +52,53 @@ def _tail_pad_to_power_of_two_length(x: np.ndarray, power: int) -> tuple[np.ndar
     return padded, pad
 
 
+def calculate_cone_of_influence(
+    n_samples: int, level: int, wavelet: str = "sym4"
+) -> dict[str, tuple[int, int]]:
+    """Calculate cone of influence (COI) boundaries for each wavelet decomposition level.
+
+    The cone of influence defines the region near the time series boundaries where
+    edge effects from padding may affect the reliability of wavelet coefficients.
+    For MODWT/SWT, the COI width at level j is approximately (L - 1) * 2^(j-1),
+    where L is the wavelet filter length.
+
+    Parameters
+    ----------
+    n_samples : int
+        Number of samples in the analyzed time series
+    level : int
+        Maximum decomposition level J
+    wavelet : str
+        Wavelet family name (default: "sym4")
+
+    Returns
+    -------
+    dict[str, tuple[int, int]]
+        Mapping from level names (S1, S2, ..., SJ) to (start_idx, end_idx) tuples
+        representing the reliable data region indices for each level. Data outside
+        this range falls within the COI and may be affected by boundary artifacts.
+
+    Example
+    -------
+    >>> coi = calculate_cone_of_influence(504, 5, "sym4")
+    >>> coi["S5"]  # (start, end) indices for level 5
+    (112, 392)  # COI width = (8-1) * 2^(5-1) = 112 samples on each end
+    """
+    w = pywt.Wavelet(wavelet)
+    filter_len = w.dec_len
+
+    coi_boundaries = {}
+    for j in range(1, level + 1):
+        # COI width grows exponentially with decomposition level
+        # At level j, boundary effects extend approximately (L-1) * 2^(j-1) samples
+        coi_width = (filter_len - 1) * (2 ** (j - 1))
+        start_idx = coi_width
+        end_idx = max(start_idx, n_samples - coi_width)
+        coi_boundaries[f"S{j}"] = (start_idx, end_idx)
+
+    return coi_boundaries
+
+
 def compute_modwt_logreturns(
     dates: list[str],
     closes: list[float],
@@ -312,7 +359,7 @@ def reconstruct_logprice_series(
     level: int = 5,
     wavelet: str = "sym4",
     max_level: int | None = None,
-) -> tuple[list[str], dict[str, list[float]], dict[str, Any]]:
+) -> tuple[list[str], dict[str, list[float]], dict[str, Any], dict[str, tuple[int, int]]]:
     """Reconstruct price series from log-price SWT by progressively adding bands.
 
     Padding/analysis strategy mirrors log-returns pipeline:
@@ -320,6 +367,14 @@ def reconstruct_logprice_series(
     - Tail-pad with symmetric mirroring to multiple of 2^level
     - Reconstruct on padded arrays, then unpad and slice the last ~504 days
     - Exponentiate reconstructed log-price back to price units
+
+    Returns
+    -------
+    tuple[list[str], dict[str, list[float]], dict[str, Any], dict[str, tuple[int, int]]]
+        - aligned_dates: List of ISO date strings for the analysis window
+        - recon: Dictionary mapping reconstruction names (S1, S2, etc.) to price series
+        - meta: Metadata about the reconstruction process
+        - coi_boundaries: Cone of influence boundaries for each level
     """
     if len(closes) < (level + 34):
         raise ValueError("Insufficient close prices for stable SWT at requested level")
@@ -402,6 +457,9 @@ def reconstruct_logprice_series(
     start_idx = len(dates) - target_len
     aligned_dates = dates[start_idx:]
 
+    # Calculate cone of influence boundaries for the analysis window
+    coi_boundaries = calculate_cone_of_influence(len(aligned_dates), level, wavelet)
+
     meta = {
         "wavelet": wavelet,
         "level": level,
@@ -414,7 +472,7 @@ def reconstruct_logprice_series(
         "max_level_for_padding": effective_max_level,
         "analysis_window_length": int(target_len),
     }
-    return list(aligned_dates), recon, meta
+    return list(aligned_dates), recon, meta, coi_boundaries
 
 
 def to_reconstructed_prices_json(

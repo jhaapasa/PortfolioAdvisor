@@ -90,25 +90,41 @@ cd /Users/jhaapasa/repos/PortfolioAdvisor && \
 ```
 
 ## Prepare a branch for PR (rebase + squash fixups)
-1) Rebase onto latest main and autosquash fixups (non-interactive editor).
+1) Ensure you have saved all work first to GitHub.
+
+2) Rebase onto latest main and autosquash fixups (non-interactive editor).
 ```bash
 cd /Users/jhaapasa/repos/PortfolioAdvisor && \
   git fetch origin --prune && \
   GIT_SEQUENCE_EDITOR=true git rebase -i --rebase-merges --autosquash origin/main
 ```
-2) Ensure the “Before Commit Checklist” passes; make final tidy commits (squash fixups) as needed.
-3) Push with `--force-with-lease`.
+3) Ensure the “Before Commit Checklist” passes; make final tidy commits (squash fixups) as needed.
+4) Push with `--force-with-lease`.
 ```bash
 cd /Users/jhaapasa/repos/PortfolioAdvisor && \
   git push --force-with-lease
 ```
-4) Confirm CI is green; open PR.
+5) Confirm CI is green; open PR.
 ```bash
 # If GitHub CLI is available
 cd /Users/jhaapasa/repos/PortfolioAdvisor && \
   gh pr create --fill --base main --head $(git branch --show-current)
 ```
 - If CLI is unavailable, open a PR in the GitHub UI with the same base/head.
+
+## Create a PR
+1) Check for an already opened PR on this branch. If it exists, you only need to make sure all work is pushed to update it. Otherwise proceed.
+
+2) Ensure you have prepared the branch for PR first
+
+3) Prepare a concise but informative PR body using markdown, by looking at branch title, commit messages and code changes as needed. Include at least the what, the why and brief testing instructions.
+
+4) Create a PR using 
+```bash
+gh pr create --title "{branch type}: Summary" --body "{Prepared PR body}" --base main --head {current branch}
+```
+
+5) Handle any errors and guide the user through fixing anything you are unable to fix. Do not accept permission or cert errors on the 'gh' tool - use appropriate permissions for all operations.
 
 ## Clean up after merge
 ```bash

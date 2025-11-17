@@ -83,10 +83,15 @@ def test_logprice_transform_and_reconstruction_behaviors():
     assert price_result.scaling.shape[0] == len(price_result.dates)
 
     # Reconstructions: full sum should approximate original prices over window
-    recon_dates, recon_map, recon_meta = reconstruct_logprice_series(
+    recon_dates, recon_map, recon_meta, coi_boundaries = reconstruct_logprice_series(
         dates=dates, closes=closes, level=5, wavelet="sym4"
     )
     assert len(recon_dates) == min(504, len(dates))
+    # Verify COI boundaries are returned
+    assert coi_boundaries is not None
+    assert "S5" in coi_boundaries
+    assert isinstance(coi_boundaries["S5"], tuple)
+    assert len(coi_boundaries["S5"]) == 2
     # Ensure required keys
     assert "S5" in recon_map
     assert "S5_D5_D4_D3_D2_D1" in recon_map

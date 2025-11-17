@@ -1,0 +1,18 @@
+---
+alwaysApply: true
+---
+
+# Tool Permission Requirements
+
+When running these commands, always use the specified permissions:
+
+- `gh` commands: Use `required_permissions: ["all"]` due to certificate requirements
+- `npm/yarn/pnpm install`: Use `required_permissions: ["network"]`
+- `git push/pull`: Use `required_permissions: ["network"]`
+- `pip install`: Use `required_permissions: ["network"]`
+- Authentication operations: Use `required_permissions: ["all"]`
+
+# Troubleshooting
+
+- If an operation fails with permission related errors, ask the user if you can run it with ["all"] permissions or outside the sandbox.
+- If git or gh operations keep failing, ensure you are using ssh and not https connections in the project

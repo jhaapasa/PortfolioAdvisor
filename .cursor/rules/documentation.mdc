@@ -1,0 +1,19 @@
+---
+description: Guidelines for creating and organizing technical documentation for design, implementation and user guidance purposes.
+alwaysApply: false
+---
+## Documentation Creation and Organization
+- **Planning and Design**: When creating multi-step plans or significant designs for features, improvements or optimization, always create a design document in docs/design
+- **Implementation**: After implementing a feature or improvement, especially a significant one that had design documentation, always cerate an implementation notes document in docs/implementation.
+- **User and Developer Documentation**: Only create user or developer documentation when asked to. Place these in the main docs/ folder, not in any subfolder.
+
+## Documentation Updates
+- Keep design documents up to date when iterating on the design
+- Always check whether you need to update user or developer documentation when implementing features
+- Always update implementation documentation when changing or further developing a feature, even if it is much later than the original documentation was created
+
+## Documentation Style and Content
+- Focus design documents on the "what" and the "why."
+- Focus implementation documents on the "how."
+- Include information on paths NOT taken for both design and implementation - and the reasons for it. This will help avoid going back and forth on key decisions.
+- Include TODO items in implementation documentation as a list of possible future expansion or improvements.
