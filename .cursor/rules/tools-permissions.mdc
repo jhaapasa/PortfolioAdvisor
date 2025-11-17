@@ -11,6 +11,7 @@ When running these commands, always use the specified permissions:
 - `git push/pull`: Use `required_permissions: ["network"]`
 - `pip install`: Use `required_permissions: ["network"]`
 - Authentication operations: Use `required_permissions: ["all"]`
+- `source` and `pytest`: Use `required_permissions: ["all"]` to ensure test runs have access to .env and other critical configuration
 
 # Troubleshooting
 
