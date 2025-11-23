@@ -24,9 +24,11 @@ logger = logging.getLogger(__name__)
 REPORT_SYSTEM = (
     "You produce a concise per-stock trailing 7-day update. "
     "Inputs: (a) news summary markdown and optional JSON metrics; (b) technical metrics including "
-    "recent returns windows and optional volatility histogram summary. "
+    "recent returns windows and optional volatility histogram summary; (c) market comparison data "
+    "including beta coefficients, Sharpe ratios, and performance vs benchmarks. "
     "Output a cohesive Markdown report with sections: TL;DR, Notable News & Events, "
-    "Sentiment Overview (7d), Performance Context (7d). "
+    "Sentiment Overview (7d), Performance Context (7d). Include market comparison insights "
+    "when available (e.g., mention if stock is outperforming benchmarks or has high beta). "
     "If a metric is missing, omit it without inventing values. Keep it concise and high-signal."
 )
 
@@ -48,6 +50,7 @@ def _build_user_prompt(
     news_json: dict[str, Any] | None,
     returns_doc: dict[str, Any] | None,
     vol_hist_doc: dict[str, Any] | None,
+    market_comparison: dict[str, Any] | None,
 ) -> str:
     parts: list[str] = []
     parts.append(f"Ticker: {ticker}\nSlug: {slug}")
@@ -65,6 +68,36 @@ def _build_user_prompt(
             spectrum = (vol_hist_doc.get("variance_spectrum") or {}).get("per_level")
             summary = "present" if spectrum else "missing"
             parts.append(f"Volatility histogram: {summary}")
+        except Exception:
+            pass
+    if market_comparison:
+        try:
+            # Extract key metrics
+            betas = market_comparison.get("betas", {})
+            sharpe = market_comparison.get("sharpe_ratios", {})
+            returns = market_comparison.get("returns", {})
+            vol = market_comparison.get("volatility_annualized")
+
+            # Format beta values
+            beta_str = ", ".join(
+                [
+                    f"{k}: {v.get('value', 'N/A') if isinstance(v, dict) else v}"
+                    for k, v in betas.items()
+                ]
+            )
+            sharpe_1yr = sharpe.get(252, "N/A")
+            return_1yr = returns.get(252, "N/A")
+
+            # Format return and volatility with proper handling
+            return_str = (
+                f"{return_1yr:.1%}" if isinstance(return_1yr, int | float) else str(return_1yr)
+            )
+            vol_str = f"{vol:.1%}" if vol and isinstance(vol, int | float) else "N/A"
+
+            parts.append(
+                f"Market Comparison - Beta: {{{beta_str}}}, Sharpe (1yr): {sharpe_1yr}, "
+                f"Return (1yr): {return_str}, Volatility: {vol_str}"
+            )
         except Exception:
             pass
     if news_json:
@@ -110,7 +143,13 @@ def collate_report_node(state: dict) -> dict:
     returns_doc = _read_json_if_exists(paths.analysis_returns_json(slug))
     vol_hist_doc = _read_json_if_exists(paths.analysis_wavelet_hist_json(slug))
 
-    prompt = _build_user_prompt(ticker, slug, news_md, news_json, returns_doc, vol_hist_doc)
+    # Load market comparison data if available
+    market_comparison_path = paths.ticker_dir(slug) / "analysis" / "market_comparison.json"
+    market_comparison = _read_json_if_exists(market_comparison_path)
+
+    prompt = _build_user_prompt(
+        ticker, slug, news_md, news_json, returns_doc, vol_hist_doc, market_comparison
+    )
     try:
         llm = get_llm(settings)
         resp = llm.invoke(REPORT_SYSTEM + "\n\n" + prompt)

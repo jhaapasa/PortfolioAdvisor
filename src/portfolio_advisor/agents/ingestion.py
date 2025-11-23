@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from ..io_utils import list_input_files
+from ..models.market import MarketContext
 
 logger = logging.getLogger(__name__)
 
@@ -226,4 +227,11 @@ def ingestion_node(state: dict) -> dict:
     ]
 
     logger.info("Ingestion agent finished: %d documents ready", len(raw_docs))
-    return {**state, "raw_docs": raw_docs}
+
+    # Initialize MarketContext if not already present
+    market_context = state.get("market_context")
+    if market_context is None:
+        market_context = MarketContext()
+        logger.info("Initialized MarketContext for market comparison analysis")
+
+    return {**state, "raw_docs": raw_docs, "market_context": market_context}
