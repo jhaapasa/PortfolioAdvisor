@@ -50,7 +50,12 @@
         "6",
         "--include-news",
         "--verbose",
-        "--agent-progress"
+        "--agent-progress",
+        "--enable-boundary-extension",
+        "--boundary-strategy",
+        "linear",
+        "--boundary-steps",
+        "10"
       ],
       "console": "integratedTerminal",
       "justMyCode": true
@@ -76,7 +81,14 @@
         "--force-extraction",
         "--ticker",
         "AAPL",
-        "--verbose"
+        "--verbose",
+        "--enable-boundary-extension",
+        "--boundary-strategy",
+        "gaussian_process",
+        "--boundary-steps",
+        "10",
+        "--boundary-lookback",
+        "30"
       ],
       "console": "integratedTerminal",
       "justMyCode": true
