@@ -70,19 +70,36 @@ class TestMarketOverviewLLMIntegration:
         # Mock LLM to return realistic market analysis
         mock_llm = MagicMock()
         mock_response = MagicMock()
-        mock_response.content = """The current market environment exhibits clear growth-oriented leadership, with technology and growth stocks significantly outpacing value and small-cap segments.
+        mock_response.content = """The current market environment exhibits clear \
+growth-oriented leadership, with technology and growth stocks significantly \
+outpacing value and small-cap segments.
 
 **Notable Rotation Patterns:**
-The Nasdaq 100's substantial outperformance (+17.2% vs SPY's +11.6%) signals continued investor preference for large-cap growth and technology stocks. Meanwhile, the Russell 2000's near-flat performance (+2.2%) indicates a pronounced large-cap bias, with investors favoring the perceived safety and liquidity of mega-cap names over the broader market breadth.
+The Nasdaq 100's substantial outperformance (+17.2% vs SPY's +11.6%) signals \
+continued investor preference for large-cap growth and technology stocks. \
+Meanwhile, the Russell 2000's near-flat performance (+2.2%) indicates a \
+pronounced large-cap bias, with investors favoring the perceived safety and \
+liquidity of mega-cap names over the broader market breadth.
 
 **Geographic Divergence:**
-International markets are showing surprising strength, with emerging markets leading developed markets. The MSCI Emerging Markets' strong showing (+22.3%) and MSCI EAFE's solid performance (+19.6%) both surpassing the S&P 500 suggests a potential broadening of global growth prospects and possibly a weakening dollar environment.
+International markets are showing surprising strength, with emerging markets \
+leading developed markets. The MSCI Emerging Markets' strong showing (+22.3%) \
+and MSCI EAFE's solid performance (+19.6%) both surpassing the S&P 500 \
+suggests a potential broadening of global growth prospects and possibly a \
+weakening dollar environment.
 
 **Asset Class Trends:**
-The equity market exhibits clear risk-on sentiment, with all major equity indices posting positive returns while fixed income struggles. Long-duration treasuries showing negative returns (-1.3%) despite rising volatility (8.3%) points to persistent inflation concerns and potential for further rate increases.
+The equity market exhibits clear risk-on sentiment, with all major equity \
+indices posting positive returns while fixed income struggles. Long-duration \
+treasuries showing negative returns (-1.3%) despite rising volatility (8.3%) \
+points to persistent inflation concerns and potential for further rate \
+increases.
 
 **Implications:**
-The market favors risk assets over safe havens, growth over value, and international over domestic. However, the concentration in large-cap growth names may present both opportunity and risk, as the narrowing leadership could reverse quickly if economic conditions shift."""
+The market favors risk assets over safe havens, growth over value, and \
+international over domestic. However, the concentration in large-cap growth \
+names may present both opportunity and risk, as the narrowing leadership \
+could reverse quickly if economic conditions shift."""
         mock_llm.invoke.return_value = mock_response
         mock_get_llm.return_value = mock_llm
 
@@ -171,10 +188,6 @@ The market favors risk assets over safe havens, growth over value, and internati
 
     def test_prompt_includes_all_benchmark_roles(self, sample_state_with_full_data):
         """Test that LLM prompt includes role descriptions for all benchmarks."""
-        from portfolio_advisor.config import MarketComparisonSettings
-
-        market_settings = MarketComparisonSettings()
-
         with patch("portfolio_advisor.agents.market_comparison.get_llm") as mock_get_llm:
             mock_llm = MagicMock()
             mock_response = MagicMock()
@@ -194,4 +207,3 @@ The market favors risk assets over safe havens, growth over value, and internati
             assert "U.S. small-cap equity benchmark" in call_args  # IWM
             assert "International developed markets equity benchmark" in call_args  # EFA
             assert "Emerging markets equity benchmark" in call_args  # EEM
-
