@@ -46,10 +46,20 @@ def _ohlc_to_dataframe(ohlc: dict[str, Any]):
     return df
 
 
-def render_candlestick_ohlcv_1y(output_dir: Path, ohlc: dict[str, Any]) -> Path | None:
+def render_candlestick_ohlcv_1y(
+    output_dir: Path, ohlc: dict[str, Any], extension_metadata: dict[str, Any] | None = None
+) -> Path | None:
     """Render a 1-year candlestick chart with volume to output_dir/report.
 
-    Returns the written path, or None if data insufficient.
+    Optionally overlays boundary extension if extension_metadata is provided.
+
+    Args:
+        output_dir: Directory for output (report/ subfolder will be created)
+        ohlc: OHLC dictionary with price data
+        extension_metadata: Optional boundary extension metadata for overlay
+
+    Returns:
+        Path to written chart, or None if data insufficient
     """
     df = _ohlc_to_dataframe(ohlc)
     if df is None or len(df) < 180:  # require ~6 months minimum
@@ -64,28 +74,104 @@ def render_candlestick_ohlcv_1y(output_dir: Path, ohlc: dict[str, Any]) -> Path 
 
     try:
         import mplfinance as mpf  # type: ignore
+        import pandas as pd  # type: ignore
     except Exception as exc:  # pragma: no cover - dependency missing
-        raise RuntimeError("mplfinance is required for plotting") from exc
+        raise RuntimeError("mplfinance and pandas are required for plotting") from exc
+
+    # Prepare extension metadata for annotation
+    last_real_date = None
+    extension_step_count = 0
+
+    if extension_metadata and isinstance(extension_metadata, dict):
+        try:
+            extension_data = extension_metadata.get("extension") or []
+            last_real_date_str = extension_metadata.get("last_real_date")
+
+            if extension_data and last_real_date_str:
+                # Store info for annotation
+                last_real_date = pd.to_datetime(last_real_date_str)
+                extension_step_count = len(extension_data)
+
+                _logger.debug(
+                    "plotting: will annotate boundary extension (%d steps)", extension_step_count
+                )
+        except Exception:  # pragma: no cover - robust to malformed extension data
+            _logger.debug("plotting: failed to process boundary extension metadata", exc_info=True)
+
+    addplots: list[Any] = []
 
     style = "yahoo"
     # Guard plotting with a lock to avoid global state races in Matplotlib
     with _plot_lock:
-        mpf.plot(
-            tail,
-            type="candle",
-            volume=True,
-            style=style,
-            figsize=(12, 6),
-            tight_layout=True,
-            savefig=dict(fname=str(out_path), dpi=150, bbox_inches="tight"),
-        )
+        fig = None
         try:
-            # Explicitly close current figure to release Matplotlib resources
-            import matplotlib.pyplot as _plt  # type: ignore
+            if addplots:
+                fig, axes = mpf.plot(  # type: ignore[assignment]
+                    tail,
+                    type="candle",
+                    volume=True,
+                    style=style,
+                    addplot=addplots,
+                    figsize=(12, 6),
+                    tight_layout=True,
+                    returnfig=True,
+                )
 
-            _plt.close("all")
-        except Exception:  # pragma: no cover - defensive cleanup
-            pass
+                # Add markers for boundary extension if present
+                if last_real_date is not None and extension_step_count > 0 and fig is not None:
+                    try:
+                        ax = axes[0] if isinstance(axes, list | tuple) else axes
+
+                        # Add vertical line at last real data point
+                        if last_real_date in tail.index:
+                            ax.axvline(
+                                x=last_real_date,
+                                color="#FF6B6B",
+                                linestyle="--",
+                                alpha=0.6,
+                                linewidth=1.5,
+                            )
+
+                            # Add text annotation
+                            ax.text(
+                                last_real_date,
+                                ax.get_ylim()[1] * 0.98,
+                                f" Boundary extension:\n {extension_step_count} steps ahead",
+                                rotation=0,
+                                verticalalignment="top",
+                                fontsize=8,
+                                color="#FF6B6B",
+                                bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
+                            )
+                    except Exception:  # pragma: no cover - annotation is optional
+                        _logger.debug("Failed to add extension markers", exc_info=True)
+
+                if fig is not None:
+                    fig.savefig(str(out_path), dpi=150, bbox_inches="tight")
+            else:
+                # No extension, use simple plot
+                mpf.plot(
+                    tail,
+                    type="candle",
+                    volume=True,
+                    style=style,
+                    figsize=(12, 6),
+                    tight_layout=True,
+                    savefig=dict(fname=str(out_path), dpi=150, bbox_inches="tight"),
+                )
+        finally:
+            try:
+                # Explicitly close current figure to release Matplotlib resources
+                if fig is not None:
+                    import matplotlib.pyplot as _plt  # type: ignore
+
+                    _plt.close(fig)
+                else:
+                    import matplotlib.pyplot as _plt  # type: ignore
+
+                    _plt.close("all")
+            except Exception:  # pragma: no cover - defensive cleanup
+                pass
     return out_path
 
 

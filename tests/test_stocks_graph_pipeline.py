@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from unittest.mock import patch
 
 from portfolio_advisor.config import Settings
 from portfolio_advisor.graphs.stocks import update_instrument
@@ -60,13 +61,21 @@ def test_update_ticker_pipeline_writes_all_artifacts(tmp_path, polygon_stub):
     )
 
     # Act
-    update_instrument(
-        settings,
-        instrument={
-            "instrument_id": "cid:stocks:us:composite:TEST",
-            "primary_ticker": "TEST",
-        },
-    )
+    with patch("portfolio_advisor.graphs.stocks.StockNewsService") as mock_news_service:
+        mock_instance = mock_news_service.return_value.__enter__.return_value
+        mock_instance.update_ticker_news.return_value = {
+            "articles_fetched": 0,
+            "articles_new": 0,
+            "articles_downloaded": 0,
+            "errors": [],
+        }
+        update_instrument(
+            settings,
+            instrument={
+                "instrument_id": "cid:stocks:us:composite:TEST",
+                "primary_ticker": "TEST",
+            },
+        )
 
     # Assert: all expected artifacts exist and have reasonable content
     base = Path(out_dir) / "stocks" / "tickers" / "cid-stocks-us-composite-test"

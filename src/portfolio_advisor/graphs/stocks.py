@@ -46,6 +46,7 @@ from ..stocks.wavelet import (
     to_reconstructed_prices_json,
     to_volatility_histogram_json,
 )
+from ..trend.boundary import ForecastStrategy, StabilizationConfig, extend_ohlc_dict
 from ..utils.slug import instrument_id_to_slug
 
 
@@ -424,10 +425,21 @@ def _render_report_node(state: StockState) -> dict:
     paths = state.get("_paths") or StockPaths(root=(Path(settings.output_dir) / "stocks"))
     ohlc = read_primary_ohlc(paths, slug)
 
-    # Render 1Y candlestick into report folder
+    # Load boundary extension if available
+    from ..stocks.db import _read_json
+
+    extension_metadata = None
+    extension_path = paths.analysis_boundary_extension_json(slug)
+    if extension_path.exists():
+        try:
+            extension_metadata = _read_json(extension_path)
+        except Exception:
+            _logger.debug("stocks.render_report: failed to load boundary extension", exc_info=True)
+
+    # Render 1Y candlestick into report folder (with optional extension overlay)
     ticker_dir = paths.ticker_dir(slug)
     try:
-        written = render_candlestick_ohlcv_1y(ticker_dir, ohlc)
+        written = render_candlestick_ohlcv_1y(ticker_dir, ohlc, extension_metadata)
         if written is not None:
             _logger.info("stocks.render_report: wrote %s", written)
     except Exception:
@@ -574,6 +586,89 @@ def _compute_wavelet_node(state: StockState) -> dict:
         write_meta(paths, slug, meta_doc)
     except Exception:
         _logger.warning("stocks.wavelet: failed to update meta", exc_info=True)
+
+    return {}
+
+
+def _compute_boundary_extension_node(state: StockState) -> dict:
+    """Compute boundary extension for trend filter stabilization.
+
+    Extends the time series with forecasted values to mitigate edge effects
+    in trend filters. The extension is saved to analysis/boundary_extension.json.
+    """
+    settings: Settings = state["settings"]
+    instrument = state["instrument"]
+    slug = state.get("_slug") or instrument_id_to_slug(str(instrument.get("instrument_id")))
+    paths = state.get("_paths") or StockPaths(root=(Path(settings.output_dir) / "stocks"))
+
+    # Check if boundary extension is requested
+    requested = set(state.get("requested_artifacts") or [])
+    boundary_enabled = bool(getattr(settings, "boundary_extension", False))
+
+    if "analysis.boundary_extension" not in requested and not boundary_enabled:
+        return {}
+
+    # Load OHLC data
+    ohlc = read_primary_ohlc(paths, slug)
+    rows = ohlc.get("data", []) or []
+
+    if len(rows) < 30:  # Need reasonable history for forecasting
+        _logger.info(
+            "stocks.boundary_extension.skip: insufficient data (%d rows) for %s",
+            len(rows),
+            slug,
+        )
+        return {}
+
+    # Configure stabilization
+    strategy_name = getattr(settings, "boundary_strategy", "linear")
+    try:
+        strategy = ForecastStrategy(strategy_name)
+    except ValueError:
+        _logger.warning(
+            "stocks.boundary_extension: unknown strategy '%s', using linear", strategy_name
+        )
+        strategy = ForecastStrategy.LINEAR
+
+    config = StabilizationConfig(
+        enable_sanitization=bool(getattr(settings, "boundary_sanitization", False)),
+        strategy=strategy,
+        lookback_period=int(getattr(settings, "boundary_lookback", 30)),
+        extension_steps=int(getattr(settings, "boundary_steps", 10)),
+    )
+
+    # Compute extension
+    try:
+        _extended_ohlc, extension_metadata = extend_ohlc_dict(ohlc, config)
+
+        # Add timestamps
+        extension_metadata["generated_at"] = utcnow_iso()
+        extension_metadata["depends_on"] = ["primary.ohlc_daily"]
+
+        # Write to analysis directory
+        from ..stocks.db import _write_json
+
+        _write_json(paths.analysis_boundary_extension_json(slug), extension_metadata)
+
+        _logger.info(
+            "stocks.boundary_extension: computed %d-step %s extension for %s",
+            config.extension_steps,
+            strategy.value,
+            slug,
+        )
+
+        # Update artifacts in meta
+        try:
+            meta_doc = read_meta(paths, slug)
+            meta_doc.setdefault("artifacts", {}).setdefault("analysis.boundary_extension", {})[
+                "last_updated"
+            ] = utcnow_iso()
+            write_meta(paths, slug, meta_doc)
+        except Exception:
+            _logger.warning("stocks.boundary_extension: failed to update meta", exc_info=True)
+
+    except Exception:
+        _logger.warning("stocks.boundary_extension: computation failed", exc_info=True)
 
     return {}
 
