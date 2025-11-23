@@ -130,18 +130,50 @@ The forecasting model creates the "right-hand side" buffer for the trend filter.
 5.  **Output**:
     *   Return new DataFrame with size $N + k$. Future dates are synthesized.
 
-## 6. Implementation Plan
+## 6. Serialization & Visualization
 
-### 6.1. Location
+To facilitate validation and debugging of the boundary stabilization feature, the system will generate specific artifacts that expose the extension logic.
+
+### 6.1. Serialization
+The calculated boundary extension will be persisted for each processed ticker to allow offline inspection.
+
+*   **Location**: `output/stocks/{ticker}/boundary_extension.json`
+*   **Content**: Contains the configuration used (method, lookback) and the time-series of the extension (future dates and prices).
+*   **Schema**:
+    ```json
+    {
+      "instrument_id": "cid:etf:us:xyz",
+      "primary_ticker": "XYZ",
+      "strategy": "gaussian_process",
+      "parameters": { "lookback": 30, "steps": 10 },
+      "last_real_date": "2024-01-01",
+      "extension": [
+        { "date": "2024-01-02", "price": 101.5 },
+        { "date": "2024-01-03", "price": 102.0 }
+      ]
+    }
+    ```
+
+### 6.2. Visualization
+The existing candlestick charting module will be enhanced to overlay the boundary extension on the standard stock charts.
+
+*   **Target**: `candle_ohlcv` charts generated during analysis (saved in `output/stocks/{ticker}/...`).
+*   **Visual Style**:
+    *   **Line**: A dotted black line connecting the last real `Close` price to the extended points.
+    *   **Axis**: The x-axis will be automatically rescaled to include the future $k$ dates.
+    *   **Indicator**: A vertical dashed line at $t_{now}$ (last real date) to visually separate historical data from the projection.
+
+## 7. Implementation Plan
+
+### 7.1. Location
 *   Source: `src/portfolio_advisor/trend/boundary.py`
 *   Tests: `tests/test_trend_boundary.py`
 
-### 6.2. Dependencies
+### 7.2. Dependencies
 *   **Core**: `numpy`, `pandas`.
-*   **Advanced Strategy**: `scikit-learn` (Add to `pyproject.toml` as optional or main dependency if we commit to using it).
-    *   *Decision*: Add `scikit-learn` to `pyproject.toml`.
+*   **Advanced Strategy**: `scikit-learn` (Add to `pyproject.toml`).
 
-### 6.3. Interface Specification
+### 7.3. Interface Specification
 
 ```python
 from dataclasses import dataclass
@@ -175,8 +207,14 @@ class BoundaryStabilizer:
         pass
 ```
 
-## 7. Next Steps
+### 7.4. Tasks
+1.  **Core Logic**: Implement `BoundaryStabilizer` and strategies (Linear, GP).
+2.  **Serialization**: Implement the JSON writer to save `boundary_extension.json` alongside stock data.
+3.  **Visualization**: Update `src/portfolio_advisor/stocks/plotting.py` (or relevant plotting module) to draw the extension line.
+4.  **Integration**: Hook the stabilizer into the main analysis pipeline.
+
+## 8. Next Steps
 1.  Add `scikit-learn` to dependencies.
-2.  Implement `BoundaryStabilizer` with `LinearForecaster`.
-3.  Implement `GaussianProcessForecaster`.
-4.  Write unit tests comparing baseline vs advanced on synthetic heteroskedastic data.
+2.  Implement `BoundaryStabilizer` core logic and serialization.
+3.  Update plotting utilities to support future extension rendering.
+4.  Run validation on a sample portfolio and inspect `candle_ohlcv` images and JSON output.
