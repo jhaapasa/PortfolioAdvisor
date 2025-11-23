@@ -16,11 +16,14 @@ ANALYST_PROMPT_TEMPLATE = (
     "Provide a concise, professional markdown summary covering: accounts, baskets, "
     "identifier coverage, resolver outcomes (resolved vs unresolved), and notable "
     "missing data. "
+    "Include market comparison insights if available "
+    "(portfolio risk metrics, performance vs benchmarks). "
     "Do not make recommendations.\n\n"
     "Files: {files}\n"
     "Plan steps: {plan_steps}\n"
     "Resolver: {resolver_summary}\n\n"
     "Basket Highlights:\n{basket_highlights}\n\n"
+    "Market Comparison:\n{market_comparison}\n\n"
     "Holdings (JSON lines):\n{candidates}"
 )
 
@@ -75,11 +78,53 @@ def analyst_node(state: dict) -> dict:
             continue
     basket_highlights = "\n\n".join(highlights_lines) if highlights_lines else "[none]"
 
+    # Extract market comparison data
+    market_context = state.get("market_context")
+    market_comparison_lines = []
+
+    if market_context and market_context.portfolio_metrics:
+        pm = market_context.portfolio_metrics
+        market_comparison_lines.append("Portfolio Risk Metrics:")
+
+        # Average betas
+        if pm.average_beta_vs_benchmarks:
+            beta_str = ", ".join(
+                [f"{k}: {v:.2f}" for k, v in pm.average_beta_vs_benchmarks.items()]
+            )
+            market_comparison_lines.append(f"- Average Beta: {beta_str}")
+
+        # Sharpe ratios
+        market_comparison_lines.append(f"- Portfolio Sharpe (1yr): {pm.portfolio_sharpe:.2f}")
+        market_comparison_lines.append(f"- Average Stock Sharpe: {pm.average_stock_sharpe:.2f}")
+
+        # Stocks outperforming
+        if pm.stocks_outperforming:
+            for benchmark, count in pm.stocks_outperforming.items():
+                pct = (count / pm.total_stocks * 100) if pm.total_stocks > 0 else 0
+                market_comparison_lines.append(
+                    f"- Stocks outperforming {benchmark}: {count}/{pm.total_stocks} ({pct:.0f}%)"
+                )
+
+        # Top contributors
+        if pm.top_contributors:
+            market_comparison_lines.append("\nTop Contributors (vs SPY):")
+            for i, contrib in enumerate(pm.top_contributors[:3]):
+                ticker = contrib["ticker"]
+                excess = contrib.get("excess_sharpe", 0)
+                market_comparison_lines.append(f"{i+1}. {ticker}: Excess Sharpe {excess:+.2f}")
+
+    market_comparison = (
+        "\n".join(market_comparison_lines)
+        if market_comparison_lines
+        else "[no market comparison data available]"
+    )
+
     prompt = ANALYST_PROMPT_TEMPLATE.format(
         files=", ".join(file_descriptions) if file_descriptions else "none",
         plan_steps=", ".join(plan.get("steps", [])),
         resolver_summary=resolver_summary,
         basket_highlights=basket_highlights,
+        market_comparison=market_comparison,
         candidates=cand_lines,
     )
 

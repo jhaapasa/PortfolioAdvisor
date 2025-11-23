@@ -100,6 +100,7 @@ def analyze_portfolio(
     input_names = [str(doc.get("name", "")) for doc in raw_docs]
     resolved = result.get("resolved_holdings", []) or []
     unresolved = result.get("unresolved_entities", []) or []
+
     lines = [
         "# Portfolio Analysis Report",
         f"Generated: {datetime.now(UTC).isoformat()}",
@@ -114,10 +115,72 @@ def analyze_portfolio(
         "## Plan",
         *(f"- {s}" for s in (result.get("plan", {}) or {}).get("steps", [])),
         "",
-        "## Analysis",
-        result.get("analysis", "No analysis produced."),
-        "",
     ]
+
+    # Add market comparison section if available
+    market_context = result.get("market_context")
+    if market_context and market_context.portfolio_metrics:
+        pm = market_context.portfolio_metrics
+        lines.extend(
+            [
+                "## Market Comparison",
+                "",
+                "### Portfolio Risk Metrics",
+            ]
+        )
+
+        # Average betas
+        if pm.average_beta_vs_benchmarks:
+            for benchmark, beta in pm.average_beta_vs_benchmarks.items():
+                lines.append(f"- Average Beta vs {benchmark}: {beta:.2f}")
+
+        # Sharpe ratios
+        lines.extend(
+            [
+                f"- Portfolio Sharpe Ratio (1yr): {pm.portfolio_sharpe:.2f}",
+                f"- Average Stock Sharpe Ratio: {pm.average_stock_sharpe:.2f}",
+                "",
+                "### Benchmark Performance",
+            ]
+        )
+
+        # Stocks outperforming
+        if pm.stocks_outperforming:
+            for benchmark, count in pm.stocks_outperforming.items():
+                pct = (count / pm.total_stocks * 100) if pm.total_stocks > 0 else 0
+                lines.append(
+                    f"- Stocks outperforming {benchmark}: {count} of {pm.total_stocks} ({pct:.0f}%)"
+                )
+
+        # Top contributors
+        if pm.top_contributors:
+            lines.extend(
+                [
+                    "",
+                    "### Top Contributors to Outperformance (vs SPY)",
+                ]
+            )
+            for i, contrib in enumerate(pm.top_contributors[:5], 1):
+                ticker = contrib["ticker"]
+                excess_sharpe = contrib.get("excess_sharpe", 0)
+                excess_return = contrib.get("excess_return")
+                if excess_return is not None:
+                    lines.append(
+                        f"{i}. **{ticker}**: Excess Sharpe {excess_sharpe:+.2f}, "
+                        f"Excess Return {excess_return:+.1%}"
+                    )
+                else:
+                    lines.append(f"{i}. **{ticker}**: Excess Sharpe {excess_sharpe:+.2f}")
+
+        lines.append("")
+
+    lines.extend(
+        [
+            "## Analysis",
+            result.get("analysis", "No analysis produced."),
+            "",
+        ]
+    )
 
     output_path = write_output_text(settings.output_dir, "analysis.md", "\n".join(lines))
     # Write resolved positions JSON for debugging/visibility

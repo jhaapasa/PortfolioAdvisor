@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from portfolio_advisor.agents.market_comparison import (
+    _generate_market_themes_narrative,
     compute_portfolio_market_metrics_node,
     compute_reference_metrics_node,
     compute_stock_market_comparisons_node,
@@ -292,3 +293,125 @@ class TestGenerateMarketOverviewReportNode:
         portfolio_dir = Path(sample_state["settings"].portfolio_dir)
         report_files = list(portfolio_dir.glob("market_overview_*.md"))
         assert len(report_files) == 0
+
+    @patch("portfolio_advisor.agents.market_comparison.get_llm")
+    def test_includes_llm_market_themes(self, mock_get_llm, sample_state):
+        """Test that market overview report includes LLM-generated market themes."""
+        # Set up mock LLM
+        mock_llm = MagicMock()
+        mock_response = MagicMock()
+        mock_response.content = (
+            "The market is exhibiting strong growth-oriented leadership. "
+            "Nasdaq 100 outperformance reflects investor preference for technology. "
+            "International markets are showing divergence with emerging markets lagging."
+        )
+        mock_llm.invoke.return_value = mock_response
+        mock_get_llm.return_value = mock_llm
+
+        # Set up reference metrics
+        sample_state["market_context"].reference_metrics["SPY"] = ReferenceTickerMetrics(
+            symbol="SPY",
+            returns={63: 0.052, 126: 0.123, 252: 0.187, 504: 0.245},
+            sharpe_ratios={63: 1.12, 126: 1.08, 252: 1.05, 504: 0.98},
+            volatility_annualized=0.182,
+            as_of="2024-11-17",
+        )
+        sample_state["market_context"].reference_metrics["QQQ"] = ReferenceTickerMetrics(
+            symbol="QQQ",
+            returns={63: 0.071, 126: 0.158, 252: 0.224, 504: 0.289},
+            sharpe_ratios={63: 1.28, 126: 1.22, 252: 1.18, 504: 1.15},
+            volatility_annualized=0.198,
+            as_of="2024-11-17",
+        )
+
+        # Run node
+        generate_market_overview_report_node(sample_state)
+
+        # Verify LLM was called
+        assert mock_llm.invoke.called
+        call_args = mock_llm.invoke.call_args[0][0]
+        assert "market performance data" in call_args.lower()
+        assert "benchmark" in call_args.lower()
+
+        # Check report includes LLM-generated content
+        portfolio_dir = Path(sample_state["settings"].portfolio_dir)
+        report_files = list(portfolio_dir.glob("market_overview_*.md"))
+        assert len(report_files) == 1
+
+        with open(report_files[0]) as f:
+            content = f.read()
+            assert "Market Themes and Context" in content
+            assert "growth-oriented leadership" in content
+            assert "Nasdaq 100 outperformance" in content
+            assert "emerging markets lagging" in content
+
+    @patch("portfolio_advisor.agents.market_comparison.get_llm")
+    def test_handles_llm_failure_gracefully(self, mock_get_llm, sample_state):
+        """Test that report generation handles LLM failures gracefully."""
+        # Set up mock LLM that raises an exception
+        mock_llm = MagicMock()
+        mock_llm.invoke.side_effect = Exception("LLM service unavailable")
+        mock_get_llm.return_value = mock_llm
+
+        # Set up reference metrics
+        sample_state["market_context"].reference_metrics["SPY"] = ReferenceTickerMetrics(
+            symbol="SPY",
+            returns={63: 0.052, 126: 0.123, 252: 0.187, 504: 0.245},
+            sharpe_ratios={63: 1.12, 126: 1.08, 252: 1.05, 504: 0.98},
+            volatility_annualized=0.182,
+            as_of="2024-11-17",
+        )
+
+        # Run node - should not raise exception
+        generate_market_overview_report_node(sample_state)
+
+        # Check report was still generated with fallback message
+        portfolio_dir = Path(sample_state["settings"].portfolio_dir)
+        report_files = list(portfolio_dir.glob("market_overview_*.md"))
+        assert len(report_files) == 1
+
+        with open(report_files[0]) as f:
+            content = f.read()
+            assert "Market Themes and Context" in content
+            assert "unavailable due to LLM error" in content
+
+    def test_market_themes_prompt_includes_benchmark_roles(self, sample_state):
+        """Test that market themes prompt includes benchmark role descriptions."""
+        from portfolio_advisor.config import MarketComparisonSettings
+
+        # Set up reference metrics
+        sample_state["market_context"].reference_metrics["SPY"] = ReferenceTickerMetrics(
+            symbol="SPY",
+            returns={252: 0.187},
+            sharpe_ratios={252: 1.05},
+            volatility_annualized=0.182,
+            as_of="2024-11-17",
+        )
+        sample_state["market_context"].reference_metrics["QQQ"] = ReferenceTickerMetrics(
+            symbol="QQQ",
+            returns={252: 0.224},
+            sharpe_ratios={252: 1.18},
+            volatility_annualized=0.198,
+            as_of="2024-11-17",
+        )
+
+        market_settings = MarketComparisonSettings()
+
+        # Generate narrative (will fail but we can check the prompt)
+        with patch("portfolio_advisor.agents.market_comparison.get_llm") as mock_get_llm:
+            mock_llm = MagicMock()
+            mock_response = MagicMock()
+            mock_response.content = "Test narrative"
+            mock_llm.invoke.return_value = mock_response
+            mock_get_llm.return_value = mock_llm
+
+            _generate_market_themes_narrative(
+                sample_state["market_context"], market_settings, sample_state["settings"]
+            )
+
+            # Check that prompt includes role descriptions
+            call_args = mock_llm.invoke.call_args[0][0]
+            assert "Primary broad U.S. large-cap equity benchmark" in call_args  # SPY role
+            assert "U.S. large-cap growth and technology benchmark" in call_args  # QQQ role
+            assert "Performance Data" in call_args
+            assert "Risk Metrics" in call_args

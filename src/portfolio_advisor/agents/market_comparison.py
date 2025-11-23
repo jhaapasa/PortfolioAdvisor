@@ -10,6 +10,7 @@ from typing import Any
 
 from portfolio_advisor.config import MarketComparisonSettings
 from portfolio_advisor.graphs.stocks import update_instrument
+from portfolio_advisor.llm import get_llm
 from portfolio_advisor.models.market import (
     MarketContext,
     PortfolioMarketMetrics,
@@ -19,6 +20,46 @@ from portfolio_advisor.stocks.analysis import MarketMetricsService
 from portfolio_advisor.utils.slug import instrument_id_to_slug, slugify
 
 logger = logging.getLogger(__name__)
+
+
+# LLM prompt template for market themes generation
+MARKET_THEMES_SYSTEM_PROMPT = (
+    "You are a professional financial market analyst. Your task is to analyze market "
+    "performance data across key benchmarks and generate a concise, insightful narrative "
+    "highlighting market themes, trends, and implications.\n\n"
+    "Your analysis should be:\n"
+    "- Data-driven and objective\n"
+    "- Focused on actionable themes rather than restating numbers\n"
+    "- Professional and clear\n"
+    "- Concise (3-5 paragraphs maximum)\n\n"
+    "Do not make specific investment recommendations. Focus on market context and themes "
+    "that would help investors understand the current environment."
+)
+
+MARKET_THEMES_USER_TEMPLATE = (
+    "Analyze the following market performance data and generate a narrative "
+    "highlighting key themes and implications.\n\n"
+    "## Benchmark Context\n\n"
+    "You are analyzing the following market benchmarks:\n"
+    "{benchmark_descriptions}\n\n"
+    "## Performance Data (1-Year Horizon)\n\n"
+    "{performance_data}\n\n"
+    "## Risk Metrics\n\n"
+    "{risk_data}\n\n"
+    "## Analysis Requirements\n\n"
+    "Generate a narrative analysis covering:\n\n"
+    "1. **Notable Rotation Patterns**: Identify leadership themes "
+    "(e.g., growth vs value, large vs small cap, sector trends)\n"
+    "2. **Geographic Divergence**: Compare domestic vs international performance "
+    "and what it suggests\n"
+    "3. **Asset Class Trends**: Assess equities vs fixed income, risk-on vs risk-off "
+    "sentiment\n"
+    "4. **Volatility Regime**: Discuss what current volatility levels suggest "
+    "about market sentiment and risk appetite\n"
+    "5. **Implications**: What the data suggests for portfolio positioning and "
+    "market outlook\n\n"
+    "Focus on identifying meaningful patterns and themes. Be concise and insightful."
+)
 
 
 def ensure_reference_fresh_node(state: dict[str, Any]) -> dict[str, Any]:
@@ -345,8 +386,117 @@ def compute_portfolio_market_metrics_node(state: dict[str, Any]) -> dict[str, An
     return {"market_context": market_context}
 
 
+def _generate_market_themes_narrative(
+    market_context: MarketContext, market_settings: MarketComparisonSettings, settings: Any
+) -> str:
+    """Generate LLM-based narrative analysis of market themes and context.
+
+    Args:
+        market_context: MarketContext with reference ticker metrics
+        market_settings: MarketComparisonSettings with reference ticker roles
+        settings: Application settings for LLM configuration
+
+    Returns:
+        Markdown-formatted narrative analysis, or fallback message if LLM fails
+    """
+    ref_metrics = market_context.reference_metrics
+    if not ref_metrics:
+        return "*Insufficient reference data for market themes analysis.*"
+
+    # Build benchmark descriptions from config
+    benchmark_lines = []
+    for ticker_config in market_settings.reference_tickers:
+        benchmark_lines.append(
+            f"- **{ticker_config.symbol}** ({ticker_config.name}): {ticker_config.role}"
+        )
+    benchmark_descriptions = "\n".join(benchmark_lines)
+
+    # Build performance data table (1yr returns and Sharpe)
+    perf_lines = ["| Benchmark | Symbol | 1yr Return | 1yr Sharpe | Volatility |"]
+    perf_lines.append("|-----------|--------|------------|------------|------------|")
+
+    for ticker_config in market_settings.reference_tickers:
+        symbol = ticker_config.symbol
+        if symbol in ref_metrics:
+            metrics = ref_metrics[symbol]
+            ret_1yr = metrics.returns.get(252)
+            sharpe_1yr = metrics.sharpe_ratios.get(252)
+            vol = metrics.volatility_annualized
+
+            ret_str = f"{ret_1yr:+.1%}" if ret_1yr is not None else "N/A"
+            sharpe_str = f"{sharpe_1yr:.2f}" if sharpe_1yr is not None else "N/A"
+            vol_str = f"{vol:.1%}" if vol is not None else "N/A"
+
+            perf_lines.append(
+                f"| {ticker_config.name} | {symbol} | {ret_str} | {sharpe_str} | {vol_str} |"
+            )
+
+    performance_data = "\n".join(perf_lines)
+
+    # Build risk data summary
+    risk_lines = []
+
+    # Collect and sort by Sharpe ratio
+    sharpe_ranking = []
+    for symbol, metrics in ref_metrics.items():
+        sharpe_1yr = metrics.sharpe_ratios.get(252)
+        if sharpe_1yr is not None:
+            ticker_config = next(
+                (t for t in market_settings.reference_tickers if t.symbol == symbol), None
+            )
+            name = ticker_config.name if ticker_config else symbol
+            sharpe_ranking.append((name, symbol, sharpe_1yr))
+
+    sharpe_ranking.sort(key=lambda x: x[2], reverse=True)
+
+    if sharpe_ranking:
+        risk_lines.append("**Risk-Adjusted Performance (1yr Sharpe, sorted):**")
+        for name, symbol, sharpe in sharpe_ranking:
+            risk_lines.append(f"- {name} ({symbol}): {sharpe:.2f}")
+
+    # Volatility summary
+    risk_lines.append("")
+    risk_lines.append("**Volatility Levels (21-day annualized):**")
+    vol_data = []
+    for symbol, metrics in ref_metrics.items():
+        vol = metrics.volatility_annualized
+        if vol is not None:
+            ticker_config = next(
+                (t for t in market_settings.reference_tickers if t.symbol == symbol), None
+            )
+            name = ticker_config.name if ticker_config else symbol
+            vol_data.append((name, symbol, vol))
+
+    vol_data.sort(key=lambda x: x[2], reverse=True)
+    for name, symbol, vol in vol_data:
+        risk_lines.append(f"- {name} ({symbol}): {vol:.1%}")
+
+    risk_data = "\n".join(risk_lines)
+
+    # Build the prompt
+    prompt = MARKET_THEMES_USER_TEMPLATE.format(
+        benchmark_descriptions=benchmark_descriptions,
+        performance_data=performance_data,
+        risk_data=risk_data,
+    )
+
+    # Invoke LLM
+    try:
+        llm = get_llm(settings)
+        response = llm.invoke(MARKET_THEMES_SYSTEM_PROMPT + "\n\n" + prompt)
+        content = getattr(response, "content", str(response))
+        logger.info("Generated market themes narrative (%d chars)", len(content))
+        return content.strip()
+    except Exception as exc:  # pragma: no cover - network/LLM errors vary
+        logger.warning("LLM call for market themes failed: %s", exc)
+        return (
+            "*Market themes analysis unavailable due to LLM error. "
+            "See structured performance and risk metrics above for market overview.*"
+        )
+
+
 def _build_market_assessment(
-    market_context: MarketContext, market_settings: MarketComparisonSettings
+    market_context: MarketContext, market_settings: MarketComparisonSettings, settings: Any
 ) -> list[str]:
     """Build the Market Assessment section with structured analysis.
 
@@ -354,7 +504,7 @@ def _build_market_assessment(
     1. Performance Summary (1yr) - structured templated content
     2. Risk-Adjusted Returns (1yr Sharpe) - structured templated content
     3. Volatility Environment - structured templated content
-    4. Market Themes and Context - LLM-generated narrative (future enhancement)
+    4. Market Themes and Context - LLM-generated narrative
     """
     lines = []
 
@@ -507,14 +657,18 @@ def _build_market_assessment(
             bond_str = ", ".join([f"{name} ({vol:.1%})" for name, sym, vol, ac in bond_vols])
             lines.append(f"- **Fixed income volatility**: {bond_str}")
 
-    # 4. Market Themes and Context (LLM-generated - future enhancement)
+    # 4. Market Themes and Context (LLM-generated narrative)
     lines.extend(
         [
             "",
             "### Market Themes and Context",
-            "*[LLM-Generated Analysis - To be implemented in future phase]*",
+            "",
         ]
     )
+
+    # Generate LLM-based narrative analysis
+    narrative = _generate_market_themes_narrative(market_context, market_settings, settings)
+    lines.append(narrative)
 
     return lines
 
@@ -613,7 +767,7 @@ def generate_market_overview_report_node(state: dict[str, Any]) -> dict[str, Any
         )
 
     # Build market assessment section
-    assessment_lines = _build_market_assessment(market_context, market_settings)
+    assessment_lines = _build_market_assessment(market_context, market_settings, settings)
 
     # Generate report
     report_lines = [
