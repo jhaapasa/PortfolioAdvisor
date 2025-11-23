@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -116,3 +117,64 @@ class Settings(BaseSettings):
         if int(value) < 1 or int(value) > 8:
             raise ValueError("WAVELET_LEVEL must be between 1 and 8")
         return int(value)
+
+
+@dataclass
+class ReferenceTicker:
+    """Reference ticker configuration with role description for LLM context."""
+
+    symbol: str
+    name: str
+    role: str  # Description for LLM prompts and market assessment
+
+
+class MarketComparisonSettings:
+    """Configuration for market comparison and benchmark analysis."""
+
+    # Reference tickers with roles for LLM prompt inclusion
+    reference_tickers: list[ReferenceTicker] = [
+        ReferenceTicker(
+            symbol="SPY", name="S&P 500", role="Primary broad U.S. large-cap equity benchmark"
+        ),
+        ReferenceTicker(
+            symbol="QQQ", name="Nasdaq 100", role="U.S. large-cap growth and technology benchmark"
+        ),
+        ReferenceTicker(symbol="IWM", name="Russell 2000", role="U.S. small-cap equity benchmark"),
+        ReferenceTicker(
+            symbol="VTI", name="Total Stock Market", role="Broad U.S. total market equity benchmark"
+        ),
+        ReferenceTicker(
+            symbol="EFA", name="MSCI EAFE", role="International developed markets equity benchmark"
+        ),
+        ReferenceTicker(
+            symbol="EEM", name="MSCI Emerging Markets", role="Emerging markets equity benchmark"
+        ),
+        ReferenceTicker(
+            symbol="AGG", name="Aggregate Bond", role="U.S. investment-grade bond benchmark"
+        ),
+        ReferenceTicker(
+            symbol="TLT",
+            name="20+ Year Treasury",
+            role="U.S. long-duration treasury bond benchmark",
+        ),
+    ]
+
+    # Default benchmarks for beta calculations (subset of reference_tickers)
+    default_benchmarks: list[str] = ["SPY", "QQQ", "IWM"]
+
+    # Time horizons for performance and Sharpe ratio calculations
+    time_horizons_days: list[int] = [63, 126, 252, 504]  # 3mo, 6mo, 1yr, 2yr
+
+    # Risk-free rate (configurable; future: fetch from FRED API)
+    risk_free_rate_annual: float = 0.045  # 4.5%
+    risk_free_rate_daily: float = 0.045 / 252  # ~0.000178
+
+    @property
+    def reference_symbols(self) -> list[str]:
+        """Extract just the ticker symbols for data fetching."""
+        return [ticker.symbol for ticker in self.reference_tickers]
+
+    @property
+    def benchmark_roles(self) -> dict[str, str]:
+        """Map of ticker symbol to role description for LLM prompts."""
+        return {ticker.symbol: ticker.role for ticker in self.reference_tickers}

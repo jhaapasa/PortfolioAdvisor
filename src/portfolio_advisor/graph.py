@@ -17,11 +17,19 @@ from langgraph.types import Send
 
 from .agents.analyst import analyst_node
 from .agents.ingestion import ingestion_node
+from .agents.market_comparison import (
+    compute_portfolio_market_metrics_node,
+    compute_reference_metrics_node,
+    compute_stock_market_comparisons_node,
+    ensure_reference_fresh_node,
+    generate_market_overview_report_node,
+)
 from .agents.parser import parse_one_node
 from .agents.planner import planner_node
 from .agents.resolver import resolve_one_node
 from .graphs.baskets import build_basket_graph
 from .graphs.stocks import update_all_for_instruments
+from .models.market import MarketContext
 from .portfolio.persistence import (
     PortfolioPaths,
     append_history_diffs,
@@ -47,6 +55,7 @@ class GraphState(TypedDict, total=False):
     basket_reports: Annotated[list[dict], operator.add]
     instruments: list[dict]
     baskets: list[dict]
+    market_context: MarketContext
 
 
 def _dispatch_parse_tasks(state: GraphState):
@@ -238,6 +247,14 @@ def build_graph() -> Any:
 
     graph.add_node("update_stocks", _update_stocks_node)
     graph.add_node("run_baskets", _run_baskets_node)
+
+    # Market comparison nodes
+    graph.add_node("ensure_reference_fresh", ensure_reference_fresh_node)
+    graph.add_node("compute_reference_metrics", compute_reference_metrics_node)
+    graph.add_node("compute_stock_comparisons", compute_stock_market_comparisons_node)
+    graph.add_node("compute_portfolio_metrics", compute_portfolio_market_metrics_node)
+    graph.add_node("generate_market_overview", generate_market_overview_report_node)
+
     graph.add_node("analyst", analyst_node, defer=True)
 
     graph.set_entry_point("ingestion")
@@ -249,10 +266,15 @@ def build_graph() -> Any:
     graph.add_conditional_edges("dispatch_resolve", _dispatch_resolve_tasks)
     graph.add_edge("resolve_one", "join_after_resolve")
     graph.add_edge("join_after_resolve", "commit_portfolio")
-    # Always attempt stocks/baskets even if resolver produced none; the nodes are no-ops when empty
-    graph.add_edge("commit_portfolio", "update_stocks")
-    graph.add_edge("update_stocks", "run_baskets")
-    graph.add_edge("run_baskets", "analyst")
+    # Market comparison flow
+    graph.add_edge("commit_portfolio", "ensure_reference_fresh")
+    graph.add_edge("ensure_reference_fresh", "compute_reference_metrics")
+    graph.add_edge("compute_reference_metrics", "generate_market_overview")
+    graph.add_edge("generate_market_overview", "update_stocks")
+    graph.add_edge("update_stocks", "compute_stock_comparisons")
+    graph.add_edge("compute_stock_comparisons", "run_baskets")
+    graph.add_edge("run_baskets", "compute_portfolio_metrics")
+    graph.add_edge("compute_portfolio_metrics", "analyst")
     graph.add_edge("analyst", END)
 
     return graph.compile()
