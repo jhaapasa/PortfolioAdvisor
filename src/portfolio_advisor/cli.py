@@ -70,6 +70,29 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Process all stocks (for extract-text mode)",
     )
+    p.add_argument(
+        "--enable-boundary-extension",
+        action="store_true",
+        help="Enable boundary stabilization for trend filters",
+    )
+    p.add_argument(
+        "--boundary-strategy",
+        choices=["linear", "gaussian_process"],
+        default="linear",
+        help="Forecasting strategy for boundary extension (default: linear)",
+    )
+    p.add_argument(
+        "--boundary-steps",
+        type=int,
+        default=10,
+        help="Number of steps to forecast for boundary extension (default: 10)",
+    )
+    p.add_argument(
+        "--boundary-lookback",
+        type=int,
+        default=30,
+        help="Lookback period for boundary extension model (default: 30)",
+    )
 
     # Env overrides
     p.add_argument("--openai-api-key")
@@ -131,6 +154,9 @@ def main(argv: list[str] | None = None) -> int:
     # If user provided a wavelet level, ensure wavelet analysis is enabled
     if "wavelet_level" in overrides:
         overrides["wavelet"] = True
+    # Map enable_boundary_extension to boundary_extension
+    if "enable_boundary_extension" in overrides:
+        overrides["boundary_extension"] = overrides.pop("enable_boundary_extension")
     if mode == "portfolio":
         try:
             # Ensure wavelet flag is forwarded to Settings via overrides
