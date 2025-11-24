@@ -78,9 +78,10 @@ def render_candlestick_ohlcv_1y(
     except Exception as exc:  # pragma: no cover - dependency missing
         raise RuntimeError("mplfinance and pandas are required for plotting") from exc
 
-    # Prepare extension metadata for annotation
+    # Process and extend with boundary extension if provided
     last_real_date = None
-    extension_step_count = 0
+    extension_line = None
+    addplots: list[Any] = []
 
     if extension_metadata and isinstance(extension_metadata, dict):
         try:
@@ -88,23 +89,66 @@ def render_candlestick_ohlcv_1y(
             last_real_date_str = extension_metadata.get("last_real_date")
 
             if extension_data and last_real_date_str:
-                # Store info for annotation
                 last_real_date = pd.to_datetime(last_real_date_str)
-                extension_step_count = len(extension_data)
 
-                _logger.debug(
-                    "plotting: will annotate boundary extension (%d steps)", extension_step_count
+                # Create extension DataFrame with future dates and prices
+                ext_dates = pd.DatetimeIndex(
+                    [pd.to_datetime(item["date"]) for item in extension_data]
                 )
-        except Exception:  # pragma: no cover - robust to malformed extension data
-            _logger.debug("plotting: failed to process boundary extension metadata", exc_info=True)
+                ext_prices = [item["price"] for item in extension_data]
 
-    addplots: list[Any] = []
+                # Extend the tail DataFrame to include future dates
+                # Create dummy OHLC rows for the extension (we'll only show the line)
+                ext_df = pd.DataFrame(
+                    {
+                        "open": ext_prices,
+                        "high": ext_prices,
+                        "low": ext_prices,
+                        "close": ext_prices,
+                        "volume": [0] * len(ext_prices),
+                    },
+                    index=ext_dates,
+                )
+
+                # Combine tail with extension
+                tail = pd.concat([tail, ext_df])
+
+                # Create the extension line series (includes connection from last real point)
+                if last_real_date in tail.index:
+                    last_real_price = df.loc[last_real_date, "close"]  # Get from original df
+
+                    # Build extension line: start from last real price, then follow forecast
+                    extension_line = pd.Series(index=tail.index, dtype=float)
+                    extension_line.loc[last_real_date] = last_real_price
+
+                    for date, price in zip(ext_dates, ext_prices):
+                        extension_line.loc[date] = price
+
+                    # Add the extension line as an overlay (black dotted)
+                    addplots.append(
+                        mpf.make_addplot(
+                            extension_line,
+                            panel=0,
+                            color="black",
+                            width=2.0,
+                            linestyle=":",
+                            alpha=0.7,
+                        )
+                    )
+
+                    _logger.debug(
+                        "plotting: added boundary extension line (%d forecast points)",
+                        len(ext_dates),
+                    )
+        except Exception:  # pragma: no cover - robust to malformed extension data
+            _logger.debug("plotting: failed to create boundary extension overlay", exc_info=True)
 
     style = "yahoo"
     # Guard plotting with a lock to avoid global state races in Matplotlib
     with _plot_lock:
         fig = None
         try:
+            # Always return figure to add markers
             if addplots:
                 fig, axes = mpf.plot(  # type: ignore[assignment]
                     tail,
@@ -116,49 +160,65 @@ def render_candlestick_ohlcv_1y(
                     tight_layout=True,
                     returnfig=True,
                 )
-
-                # Add markers for boundary extension if present
-                if last_real_date is not None and extension_step_count > 0 and fig is not None:
-                    try:
-                        ax = axes[0] if isinstance(axes, list | tuple) else axes
-
-                        # Add vertical line at last real data point
-                        if last_real_date in tail.index:
-                            ax.axvline(
-                                x=last_real_date,
-                                color="#FF6B6B",
-                                linestyle="--",
-                                alpha=0.6,
-                                linewidth=1.5,
-                            )
-
-                            # Add text annotation
-                            ax.text(
-                                last_real_date,
-                                ax.get_ylim()[1] * 0.98,
-                                f" Boundary extension:\n {extension_step_count} steps ahead",
-                                rotation=0,
-                                verticalalignment="top",
-                                fontsize=8,
-                                color="#FF6B6B",
-                                bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
-                            )
-                    except Exception:  # pragma: no cover - annotation is optional
-                        _logger.debug("Failed to add extension markers", exc_info=True)
-
-                if fig is not None:
-                    fig.savefig(str(out_path), dpi=150, bbox_inches="tight")
             else:
-                # No extension, use simple plot
-                mpf.plot(
+                fig, axes = mpf.plot(  # type: ignore[assignment]
                     tail,
                     type="candle",
                     volume=True,
                     style=style,
                     figsize=(12, 6),
                     tight_layout=True,
-                    savefig=dict(fname=str(out_path), dpi=150, bbox_inches="tight"),
+                    returnfig=True,
                 )
+
+            # Add boundary extension markers if present
+            if last_real_date is not None and extension_line is not None and fig is not None:
+                try:
+                    ax = axes[0] if isinstance(axes, list | tuple) else axes
+
+                    # Add vertical dashed line at the boundary
+                    if last_real_date in tail.index:
+                        ax.axvline(
+                            x=last_real_date,
+                            color="gray",
+                            linestyle="--",
+                            alpha=0.5,
+                            linewidth=1.5,
+                            zorder=10,
+                        )
+
+                        # Add legend for the extension line
+                        import matplotlib.lines as mlines  # type: ignore
+
+                        forecast_line = mlines.Line2D(
+                            [],
+                            [],
+                            color="black",
+                            linewidth=2,
+                            linestyle=":",
+                            alpha=0.7,
+                            label="Forecast (boundary extension)",
+                        )
+                        separator_line = mlines.Line2D(
+                            [],
+                            [],
+                            color="gray",
+                            linewidth=1.5,
+                            linestyle="--",
+                            alpha=0.5,
+                            label="Last real data",
+                        )
+                        ax.legend(
+                            handles=[forecast_line, separator_line],
+                            loc="upper left",
+                            framealpha=0.9,
+                            fontsize=9,
+                        )
+                except Exception:  # pragma: no cover - markers are optional
+                    _logger.debug("Failed to add boundary extension markers", exc_info=True)
+
+            if fig is not None:
+                fig.savefig(str(out_path), dpi=150, bbox_inches="tight")
         finally:
             try:
                 # Explicitly close current figure to release Matplotlib resources
