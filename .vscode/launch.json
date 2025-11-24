@@ -20,7 +20,6 @@
         "--wavelet-level",
         "6",
         "--include-news",
-        "--verbose",
         "--agent-progress"
       ],
       "console": "integratedTerminal",
@@ -49,13 +48,14 @@
         "--wavelet-level",
         "6",
         "--include-news",
-        "--verbose",
         "--agent-progress",
         "--enable-boundary-extension",
         "--boundary-strategy",
-        "linear",
+        "gaussian_process",
         "--boundary-steps",
-        "10"
+        "100",
+        "--boundary-lookback",
+        "300"
       ],
       "console": "integratedTerminal",
       "justMyCode": true
@@ -81,7 +81,6 @@
         "--force-extraction",
         "--ticker",
         "AAPL",
-        "--verbose",
         "--enable-boundary-extension",
         "--boundary-strategy",
         "gaussian_process",

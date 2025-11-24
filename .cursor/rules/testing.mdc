@@ -1,0 +1,12 @@
+---
+description: Policies and best practices for running tests
+alwaysApply: false
+---
+# Testing Discipline
+
+- Default: skip coverage unless the task or user explicitly asks for it. Run focused pytest invocations without instrumentation for quick smoke checks.
+- When you do need coverage, call `pytest --cov=src/portfolio_advisor --cov-report=term-missing` (or run the repo’s `scripts/test`) so results match CI.
+- To disable coverage for a smoke test, clear the inherited addopts before running pytest, e.g.
+  - `PYTEST_ADDOPTS="" pytest tests/test_cli.py -q`
+  - `PYTEST_ADDOPTS="" pytest tests -k wavelet`
+- Mention in your response whether you ran the fast smoke command or the full coverage run, so reviewers know what was exercised.

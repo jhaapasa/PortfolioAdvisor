@@ -36,6 +36,7 @@ class StabilizationConfig:
         lookback_period: Number of recent periods to use for fitting
         extension_steps: Number of steps to forecast into the future
         mad_threshold: Threshold for outlier detection (in MAD units)
+        noise_injection: Whether to inject noise into the forecast to mimic historical volatility
     """
 
     enable_sanitization: bool = False
@@ -43,6 +44,7 @@ class StabilizationConfig:
     lookback_period: int = 30
     extension_steps: int = 10
     mad_threshold: float = 3.0
+    noise_injection: bool = False
 
 
 class ForecastModel(Protocol):
@@ -56,11 +58,13 @@ class ForecastModel(Protocol):
         """
         ...
 
-    def predict(self, steps: int) -> np.ndarray:
+    def predict(self, steps: int, include_history: bool = False, noise: bool = False) -> np.ndarray:
         """Generate forecast for the specified number of steps.
 
         Args:
             steps: Number of future periods to predict
+            include_history: If True, includes the last historical point (step 0)
+            noise: If True, adds stochastic noise to the prediction (mimicking history)
 
         Returns:
             1D array of forecasted values
@@ -137,6 +141,7 @@ class LinearForecaster:
         """Initialize linear forecaster."""
         self._coeffs: np.ndarray | None = None
         self._last_x: float = 0.0
+        self._residual_std: float = 0.0
 
     def fit(self, data: np.ndarray) -> None:
         """Fit linear model to data.
@@ -155,15 +160,25 @@ class LinearForecaster:
         self._coeffs = np.polyfit(x, y, deg=1)
         self._last_x = len(data) - 1
 
+        # Calculate residuals for noise estimation
+        fitted = np.polyval(self._coeffs, x)
+        residuals = y - fitted
+        self._residual_std = np.std(residuals)
+
         _logger.debug(
-            "LinearForecaster.fit: slope=%.4f, intercept=%.4f", self._coeffs[0], self._coeffs[1]
+            "LinearForecaster.fit: slope=%.4f, intercept=%.4f, noise_std=%.4f",
+            self._coeffs[0],
+            self._coeffs[1],
+            self._residual_std,
         )
 
-    def predict(self, steps: int) -> np.ndarray:
+    def predict(self, steps: int, include_history: bool = False, noise: bool = False) -> np.ndarray:
         """Generate linear forecast.
 
         Args:
             steps: Number of future periods to predict
+            include_history: If True, includes the last historical point (step 0)
+            noise: If True, adds stochastic noise to the prediction
 
         Returns:
             Array of forecasted values
@@ -172,8 +187,22 @@ class LinearForecaster:
             raise RuntimeError("LinearForecaster.predict called before fit")
 
         # Extrapolate from last observed point
-        future_x = np.arange(self._last_x + 1, self._last_x + 1 + steps)
+        start = self._last_x if include_history else self._last_x + 1
+        future_x = np.arange(start, self._last_x + 1 + steps)
         forecast = np.polyval(self._coeffs, future_x)
+
+        if noise and steps > 0:
+            # Generate random noise
+            # We seed with a hash of the last value to be deterministic-ish but random per update?
+            # No, usually we want true randomness or a fixed seed. Let's use numpy's global state
+            # or a local random state if we want reproducibility.
+            # For now, standard normal noise scaled by residual_std.
+            noise_values = np.random.normal(0, self._residual_std, size=len(forecast))
+            
+            # If including history, we might not want to noise the anchor point?
+            # Actually, if we noise the anchor point, the "continuity" logic in BoundaryStabilizer
+            # will just shift everything to match the realized noise. That's fine.
+            forecast += noise_values
 
         return forecast
 
@@ -235,21 +264,30 @@ class GaussianProcessForecaster:
 
         _logger.debug("GaussianProcessForecaster.fit: kernel=%s", self._gp.kernel_)
 
-    def predict(self, steps: int) -> np.ndarray:
+    def predict(self, steps: int, include_history: bool = False, noise: bool = False) -> np.ndarray:
         """Generate GP forecast.
 
         Args:
             steps: Number of future periods to predict
+            include_history: If True, includes the last historical point (step 0)
+            noise: If True, samples from the posterior instead of using the mean
 
         Returns:
-            Array of forecasted values (mean predictions)
+            Array of forecasted values (mean predictions or sample)
         """
         if self._gp is None:
             raise RuntimeError("GaussianProcessForecaster.predict called before fit")
 
         # Predict future points
-        future_x = np.arange(self._last_x + 1, self._last_x + 1 + steps).reshape(-1, 1)
-        forecast, _std = self._gp.predict(future_x, return_std=True)
+        start = self._last_x if include_history else self._last_x + 1
+        future_x = np.arange(start, self._last_x + 1 + steps).reshape(-1, 1)
+        
+        if noise:
+            # Sample from the posterior distribution
+            # random_state=None ensures different samples each call
+            forecast = self._gp.sample_y(future_x, n_samples=1, random_state=None).flatten()
+        else:
+            forecast, _std = self._gp.predict(future_x, return_std=True)
 
         return forecast
 
@@ -327,14 +365,30 @@ class BoundaryStabilizer:
         forecaster = self._get_forecaster()
         forecaster.fit(training_data)
 
-        # Generate forecast
-        forecast_values = forecaster.predict(k)
+        # Generate forecast including the anchor point (step 0 = last history point)
+        # This allows us to calculate the offset between the model's fit and the actual data
+        raw_forecast = forecaster.predict(
+            k, include_history=True, noise=self.config.noise_injection
+        )
+        
+        # Calculate anchor adjustment (offset)
+        # We want the forecast to start EXACTLY at the last real price to prevent
+        # discontinuities ("jumps") that look like false trends.
+        last_real_price = training_data[-1]
+        model_anchor = raw_forecast[0]
+        offset = last_real_price - model_anchor
+        
+        # Apply offset to the future steps (indices 1..k)
+        forecast_values = raw_forecast[1:] + offset
 
         _logger.info(
-            "BoundaryStabilizer: extended series by %d steps using %s strategy",
+            "BoundaryStabilizer: extended series by %d steps using %s strategy (offset=%.4f, noise=%s)",
             k,
             self.config.strategy.value,
+            offset,
+            self.config.noise_injection,
         )
+
 
         # Create future dates (business days)
         last_date = df.index[-1]
@@ -362,6 +416,7 @@ class BoundaryStabilizer:
                 "lookback": lookback,
                 "steps": k,
                 "sanitization_enabled": self.config.enable_sanitization,
+                "noise_injection": self.config.noise_injection,
             },
             "last_real_date": last_date.strftime("%Y-%m-%d"),
             "extension": [

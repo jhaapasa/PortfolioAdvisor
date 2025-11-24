@@ -38,6 +38,7 @@ classDiagram
         +enable_sanitization: bool = False
         +forecast_strategy: str = "linear"
         +lookback_window: int = 20
+        +noise_injection: bool = False
     }
 
     class OutlierDetector {
@@ -47,7 +48,7 @@ classDiagram
     class ForecastModel {
         <<interface>>
         +fit(history: Series)
-        +predict(steps: int) Series
+        +predict(steps: int, include_history: bool = False, noise: bool = False) Series
     }
 
     class LinearForecaster {
@@ -192,10 +193,11 @@ class StabilizationConfig:
     strategy: ForecastStrategy = ForecastStrategy.LINEAR
     lookback_period: int = 30
     mad_threshold: float = 3.0
+    noise_injection: bool = False
 
 class ForecastModel(Protocol):
     def fit(self, data: np.ndarray) -> None: ...
-    def predict(self, steps: int) -> np.ndarray: ...
+    def predict(self, steps: int, include_history: bool = False, noise: bool = False) -> np.ndarray: ...
 
 class BoundaryStabilizer:
     def __init__(self, config: StabilizationConfig):
