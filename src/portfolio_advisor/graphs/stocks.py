@@ -718,6 +718,7 @@ def build_stocks_graph() -> Any:
     graph.add_node("compute_volatility", _compute_volatility_node)
     graph.add_node("compute_sma", _compute_sma_node)
     graph.add_node("compute_wavelet", _compute_wavelet_node)
+    graph.add_node("compute_boundary_extension", _compute_boundary_extension_node)
     graph.add_node("commit_metadata", _commit_metadata_node)
     graph.add_node("render_report", _render_report_node)
     # New LLM nodes for news summarization and final 7d report
