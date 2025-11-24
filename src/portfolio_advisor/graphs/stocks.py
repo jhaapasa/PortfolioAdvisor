@@ -757,7 +757,9 @@ def build_stocks_graph() -> Any:
     graph.add_edge("compute_volatility", "compute_sma")
     # Wavelet is optional; run after SMA (node will check requested_artifacts)
     graph.add_edge("compute_sma", "compute_wavelet")
-    graph.add_edge("compute_wavelet", "render_report")
+    # Boundary extension is optional; run after wavelet (node will check settings)
+    graph.add_edge("compute_wavelet", "compute_boundary_extension")
+    graph.add_edge("compute_boundary_extension", "render_report")
 
     # Insert news summarization and report collation before commit metadata
     def _route_after_render(state: StockState):
