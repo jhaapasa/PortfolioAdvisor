@@ -635,6 +635,7 @@ def _compute_boundary_extension_node(state: StockState) -> dict:
         strategy=strategy,
         lookback_period=int(getattr(settings, "boundary_lookback", 30)),
         extension_steps=int(getattr(settings, "boundary_steps", 10)),
+        noise_injection=bool(getattr(settings, "boundary_noise_injection", False)),
     )
 
     # Compute extension

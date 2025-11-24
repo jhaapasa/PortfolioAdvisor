@@ -93,6 +93,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=30,
         help="Lookback period for boundary extension model (default: 30)",
     )
+    p.add_argument(
+        "--boundary-noise-injection",
+        action="store_true",
+        help="Inject noise into the boundary extension to mimic historical volatility",
+    )
 
     # Env overrides
     p.add_argument("--openai-api-key")
@@ -157,6 +162,11 @@ def main(argv: list[str] | None = None) -> int:
     # Map enable_boundary_extension to boundary_extension
     if "enable_boundary_extension" in overrides:
         overrides["boundary_extension"] = overrides.pop("enable_boundary_extension")
+    if "boundary_noise_injection" in overrides:
+        # No remapping needed as Settings alias matches CLI arg name (mostly)
+        # Settings alias is BOUNDARY_NOISE_INJECTION -> boundary_noise_injection
+        # CLI arg is boundary_noise_injection. It's fine.
+        pass
     if mode == "portfolio":
         try:
             # Ensure wavelet flag is forwarded to Settings via overrides

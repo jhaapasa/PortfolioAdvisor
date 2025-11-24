@@ -96,7 +96,7 @@ class TestLinearForecaster:
 
         # Should be different (stochastic)
         assert not np.allclose(pred1, pred2)
-        
+
         # Predict without noise should be deterministic
         clean1 = forecaster.predict(5, noise=False)
         clean2 = forecaster.predict(5, noise=False)
@@ -262,6 +262,7 @@ class TestBoundaryStabilizer:
         # Actually, our fix ensures C0 continuity relative to the last point
         # But "continuous" means the first point isn't arbitrary.
         # Let's trust the visual/logic fix and just check length here.
+        assert abs(first_ext - last_real) < 5.0
 
     def test_extend_series_gaussian_process(self):
         """Test series extension with Gaussian Process strategy."""
@@ -281,17 +282,15 @@ class TestBoundaryStabilizer:
     def test_extend_series_with_noise(self):
         """Test extension with noise injection."""
         config = StabilizationConfig(
-            strategy=ForecastStrategy.LINEAR, 
-            noise_injection=True,
-            extension_steps=20
+            strategy=ForecastStrategy.LINEAR, noise_injection=True, extension_steps=20
         )
         stabilizer = BoundaryStabilizer(config)
         df = self._create_sample_df(60)
-        
+
         # Run twice
         ext1, _ = stabilizer.extend_series(df)
         ext2, _ = stabilizer.extend_series(df)
-        
+
         # Forecasts should differ due to noise
         assert not np.allclose(ext1["close"].values, ext2["close"].values)
 

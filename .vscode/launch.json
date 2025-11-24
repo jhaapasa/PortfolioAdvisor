@@ -50,12 +50,13 @@
         "--include-news",
         "--agent-progress",
         "--enable-boundary-extension",
+        "--boundary-noise-injection",
         "--boundary-strategy",
         "gaussian_process",
         "--boundary-steps",
         "100",
         "--boundary-lookback",
-        "300"
+        "20"
       ],
       "console": "integratedTerminal",
       "justMyCode": true

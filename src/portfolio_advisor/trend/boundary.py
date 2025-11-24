@@ -141,7 +141,7 @@ class LinearForecaster:
         """Initialize linear forecaster."""
         self._coeffs: np.ndarray | None = None
         self._last_x: float = 0.0
-        self._residual_std: float = 0.0
+        self._volatility: float = 0.0
 
     def fit(self, data: np.ndarray) -> None:
         """Fit linear model to data.
@@ -160,16 +160,16 @@ class LinearForecaster:
         self._coeffs = np.polyfit(x, y, deg=1)
         self._last_x = len(data) - 1
 
-        # Calculate residuals for noise estimation
-        fitted = np.polyval(self._coeffs, x)
-        residuals = y - fitted
-        self._residual_std = np.std(residuals)
+        # Estimate volatility from first differences (returns/changes)
+        # This captures the step-by-step "wiggliness" rather than structural deviation
+        diffs = np.diff(y)
+        self._volatility = np.std(diffs) if len(diffs) > 0 else 0.0
 
         _logger.debug(
-            "LinearForecaster.fit: slope=%.4f, intercept=%.4f, noise_std=%.4f",
+            "LinearForecaster.fit: slope=%.4f, intercept=%.4f, volatility=%.4f",
             self._coeffs[0],
             self._coeffs[1],
-            self._residual_std,
+            self._volatility,
         )
 
     def predict(self, steps: int, include_history: bool = False, noise: bool = False) -> np.ndarray:
@@ -178,7 +178,7 @@ class LinearForecaster:
         Args:
             steps: Number of future periods to predict
             include_history: If True, includes the last historical point (step 0)
-            noise: If True, adds stochastic noise to the prediction
+            noise: If True, adds stochastic noise to the prediction (Random Walk style)
 
         Returns:
             Array of forecasted values
@@ -191,18 +191,24 @@ class LinearForecaster:
         future_x = np.arange(start, self._last_x + 1 + steps)
         forecast = np.polyval(self._coeffs, future_x)
 
-        if noise and steps > 0:
-            # Generate random noise
-            # We seed with a hash of the last value to be deterministic-ish but random per update?
-            # No, usually we want true randomness or a fixed seed. Let's use numpy's global state
-            # or a local random state if we want reproducibility.
-            # For now, standard normal noise scaled by residual_std.
-            noise_values = np.random.normal(0, self._residual_std, size=len(forecast))
+        if noise and len(forecast) > 0:
+            # Generate random walk noise (cumulative sum)
+            # This creates a realistic "wandering" path instead of a "fuzzy line"
+            # We assume the linear trend provides the drift.
             
-            # If including history, we might not want to noise the anchor point?
-            # Actually, if we noise the anchor point, the "continuity" logic in BoundaryStabilizer
-            # will just shift everything to match the realized noise. That's fine.
-            forecast += noise_values
+            # Generate step changes ~ N(0, volatility)
+            steps_noise = np.random.normal(0, self._volatility, size=len(forecast))
+            
+            # If we are including history (step 0), its noise should be 0 (anchored)
+            # or we treat the whole sequence as a RW deviation from the trend line.
+            if include_history:
+                # Anchor at 0 for the first point
+                steps_noise[0] = 0
+            
+            # Integrate to get position noise
+            random_walk = np.cumsum(steps_noise)
+            
+            forecast += random_walk
 
         return forecast
 
@@ -281,7 +287,7 @@ class GaussianProcessForecaster:
         # Predict future points
         start = self._last_x if include_history else self._last_x + 1
         future_x = np.arange(start, self._last_x + 1 + steps).reshape(-1, 1)
-        
+
         if noise:
             # Sample from the posterior distribution
             # random_state=None ensures different samples each call
@@ -370,25 +376,24 @@ class BoundaryStabilizer:
         raw_forecast = forecaster.predict(
             k, include_history=True, noise=self.config.noise_injection
         )
-        
+
         # Calculate anchor adjustment (offset)
         # We want the forecast to start EXACTLY at the last real price to prevent
         # discontinuities ("jumps") that look like false trends.
         last_real_price = training_data[-1]
         model_anchor = raw_forecast[0]
         offset = last_real_price - model_anchor
-        
+
         # Apply offset to the future steps (indices 1..k)
         forecast_values = raw_forecast[1:] + offset
 
         _logger.info(
-            "BoundaryStabilizer: extended series by %d steps using %s strategy (offset=%.4f, noise=%s)",
+            "BoundaryStabilizer: extended %d steps (%s), offset=%.4f, noise=%s",
             k,
             self.config.strategy.value,
             offset,
             self.config.noise_injection,
         )
-
 
         # Create future dates (business days)
         last_date = df.index[-1]

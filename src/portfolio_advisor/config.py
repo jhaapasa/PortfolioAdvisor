@@ -82,6 +82,7 @@ class Settings(BaseSettings):
     boundary_lookback: int = Field(default=30, alias="BOUNDARY_LOOKBACK")
     boundary_steps: int = Field(default=10, alias="BOUNDARY_STEPS")
     boundary_sanitization: bool = Field(default=False, alias="BOUNDARY_SANITIZATION")
+    boundary_noise_injection: bool = Field(default=False, alias="BOUNDARY_NOISE_INJECTION")
 
     # Ollama configuration for article text extraction
     ollama_base_url: str = Field(default="http://localhost:11434", alias="OLLAMA_BASE_URL")
