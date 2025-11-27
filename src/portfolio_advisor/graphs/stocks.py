@@ -522,15 +522,13 @@ def _compute_wavelet_node(state: StockState) -> dict:
                     extended_len - original_len,
                 )
         except Exception:
-            _logger.warning(
-                "stocks.wavelet: failed to load boundary extension", exc_info=True
-            )
+            _logger.warning("stocks.wavelet: failed to load boundary extension", exc_info=True)
 
     # Compute SWT-based MODWT on full history (possibly extended)
     try:
         lvl = int(getattr(settings, "wavelet_level", 5))
         result = compute_modwt_logreturns(dates=dates, closes=closes, level=lvl, wavelet="sym4")
-        
+
         # Truncate back to original history if extended
         if extended_len > original_len:
             # result.dates has length N-1 (returns).
@@ -595,14 +593,16 @@ def _compute_wavelet_node(state: StockState) -> dict:
     try:
         lvl = int(getattr(settings, "wavelet_level", 5))
         price_result = compute_modwt_logprice(dates=dates, closes=closes, level=lvl, wavelet="sym4")
-        
+
         # Truncate price result
         if extended_len > original_len:
             if len(price_result.dates) > original_len:
                 price_result.dates = price_result.dates[:original_len]
                 price_result.details = [d[:original_len] for d in price_result.details]
                 price_result.smooth = price_result.smooth[:original_len]
-                price_result.meta["coverage"]["end_date"] = price_result.dates[-1] if price_result.dates else None
+                price_result.meta["coverage"]["end_date"] = (
+                    price_result.dates[-1] if price_result.dates else None
+                )
 
         price_coeffs_doc = to_coefficients_json(ticker=slug, result=price_result)
         price_coeffs_doc["metadata"].update(meta)
@@ -616,7 +616,7 @@ def _compute_wavelet_node(state: StockState) -> dict:
             wavelet="sym4",
             max_level=6,  # Use consistent max level for MRA consistency
         )
-        
+
         # Truncate reconstructed series
         if extended_len > original_len:
             # recon_dates corresponds to input dates (extended)
@@ -624,9 +624,9 @@ def _compute_wavelet_node(state: StockState) -> dict:
             for key in recon_map:
                 if isinstance(recon_map[key], list) and len(recon_map[key]) > original_len:
                     recon_map[key] = recon_map[key][:original_len]
-            
+
             # COI boundaries are indices.
-            # With stabilization, the "end" boundary (reliable data end) effectively moves 
+            # With stabilization, the "end" boundary (reliable data end) effectively moves
             # into the extension. We should clamp it to the original length.
             # E.g. if valid region was [0, 100] in 110-len array, and we slice to 100,
             # the valid region becomes [0, 100].
@@ -637,7 +637,7 @@ def _compute_wavelet_node(state: StockState) -> dict:
                 new_end = min(end, original_len)
                 new_boundaries[k] = (start, new_end)
             coi_boundaries = new_boundaries
-            
+
             recon_meta["boundary_stabilized"] = True
 
         # Add COI boundaries to metadata for downstream use

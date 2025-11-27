@@ -195,19 +195,19 @@ class LinearForecaster:
             # Generate random walk noise (cumulative sum)
             # This creates a realistic "wandering" path instead of a "fuzzy line"
             # We assume the linear trend provides the drift.
-            
+
             # Generate step changes ~ N(0, volatility)
             steps_noise = np.random.normal(0, self._volatility, size=len(forecast))
-            
+
             # If we are including history (step 0), its noise should be 0 (anchored)
             # or we treat the whole sequence as a RW deviation from the trend line.
             if include_history:
                 # Anchor at 0 for the first point
                 steps_noise[0] = 0
-            
+
             # Integrate to get position noise
             random_walk = np.cumsum(steps_noise)
-            
+
             forecast += random_walk
 
         return forecast
