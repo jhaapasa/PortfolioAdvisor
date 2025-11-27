@@ -76,6 +76,14 @@ class Settings(BaseSettings):
     # Enable generating LLM-based 7d news + technical per-stock report
     include_news_report: bool = Field(default=False, alias="INCLUDE_NEWS_REPORT")
 
+    # Boundary stabilization for trend filters
+    boundary_extension: bool = Field(default=False, alias="BOUNDARY_EXTENSION")
+    boundary_strategy: str = Field(default="linear", alias="BOUNDARY_STRATEGY")
+    boundary_lookback: int = Field(default=30, alias="BOUNDARY_LOOKBACK")
+    boundary_steps: int = Field(default=10, alias="BOUNDARY_STEPS")
+    boundary_sanitization: bool = Field(default=False, alias="BOUNDARY_SANITIZATION")
+    boundary_noise_injection: bool = Field(default=False, alias="BOUNDARY_NOISE_INJECTION")
+
     # Ollama configuration for article text extraction
     ollama_base_url: str = Field(default="http://localhost:11434", alias="OLLAMA_BASE_URL")
     ollama_timeout_s: int = Field(default=120, alias="OLLAMA_TIMEOUT_S")

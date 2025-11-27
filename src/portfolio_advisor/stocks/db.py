@@ -44,6 +44,9 @@ class StockPaths:
     def analysis_wavelet_reconstructed_prices_json(self, ticker: str) -> Path:
         return self.ticker_dir(ticker) / "analysis" / "wavelet_reconstructed_prices.json"
 
+    def analysis_boundary_extension_json(self, ticker: str) -> Path:
+        return self.ticker_dir(ticker) / "analysis" / "boundary_extension.json"
+
     def report_dir(self, ticker: str) -> Path:
         return self.ticker_dir(ticker) / "report"
 

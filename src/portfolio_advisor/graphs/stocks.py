@@ -46,6 +46,7 @@ from ..stocks.wavelet import (
     to_reconstructed_prices_json,
     to_volatility_histogram_json,
 )
+from ..trend.boundary import ForecastStrategy, StabilizationConfig, extend_ohlc_dict
 from ..utils.slug import instrument_id_to_slug
 
 
@@ -424,10 +425,21 @@ def _render_report_node(state: StockState) -> dict:
     paths = state.get("_paths") or StockPaths(root=(Path(settings.output_dir) / "stocks"))
     ohlc = read_primary_ohlc(paths, slug)
 
-    # Render 1Y candlestick into report folder
+    # Load boundary extension if available
+    from ..stocks.db import _read_json
+
+    extension_metadata = None
+    extension_path = paths.analysis_boundary_extension_json(slug)
+    if extension_path.exists():
+        try:
+            extension_metadata = _read_json(extension_path)
+        except Exception:
+            _logger.debug("stocks.render_report: failed to load boundary extension", exc_info=True)
+
+    # Render 1Y candlestick into report folder (with optional extension overlay)
     ticker_dir = paths.ticker_dir(slug)
     try:
-        written = render_candlestick_ohlcv_1y(ticker_dir, ohlc)
+        written = render_candlestick_ohlcv_1y(ticker_dir, ohlc, extension_metadata)
         if written is not None:
             _logger.info("stocks.render_report: wrote %s", written)
     except Exception:
@@ -487,11 +499,49 @@ def _compute_wavelet_node(state: StockState) -> dict:
     rows = ohlc.get("data", []) or []
     dates = [r.get("date") for r in rows]
     closes = [float(r.get("close", 0.0)) for r in rows]
+    original_len = len(closes)
 
-    # Compute SWT-based MODWT on full history, slice internally to last 2Y
+    # Load boundary extension if available to stabilize edge effects
+    # We append future data, compute transforms, then truncate the future part.
+    # This pushes the "cone of influence" distortion into the future (discarded) segment.
+    extension_path = paths.analysis_boundary_extension_json(slug)
+    extended_len = original_len
+    if extension_path.exists():
+        try:
+            from ..stocks.db import _read_json
+
+            ext_doc = _read_json(extension_path)
+            extension = ext_doc.get("extension", [])
+            if extension:
+                for item in extension:
+                    dates.append(item["date"])
+                    closes.append(float(item["price"]))
+                extended_len = len(closes)
+                _logger.info(
+                    "stocks.wavelet: using boundary extension (%d steps) for stabilization",
+                    extended_len - original_len,
+                )
+        except Exception:
+            _logger.warning("stocks.wavelet: failed to load boundary extension", exc_info=True)
+
+    # Compute SWT-based MODWT on full history (possibly extended)
     try:
         lvl = int(getattr(settings, "wavelet_level", 5))
         result = compute_modwt_logreturns(dates=dates, closes=closes, level=lvl, wavelet="sym4")
+
+        # Truncate back to original history if extended
+        if extended_len > original_len:
+            # result.dates has length N-1 (returns).
+            # If we added K points, we have K extra returns.
+            # We want to keep the first original_len - 1 returns.
+            target_ret_len = original_len - 1
+            if len(result.dates) > target_ret_len:
+                result.dates = result.dates[:target_ret_len]
+                result.details = [d[:target_ret_len] for d in result.details]
+                result.smooth = result.smooth[:target_ret_len]
+                # Update coverage meta
+                result.meta["coverage"]["end_date"] = result.dates[-1] if result.dates else None
+
     except Exception:
         # Best-effort; do not fail the whole pipeline
         _logger.warning("stocks.wavelet: transform failed", exc_info=True)
@@ -501,11 +551,12 @@ def _compute_wavelet_node(state: StockState) -> dict:
     import numpy as _np
 
     def _compute_lr(_closes: list[float]) -> _np.ndarray:
-        arr = _np.asarray(_closes, dtype=float)
+        # Use original unextended closes for baseline validation
+        arr = _np.asarray(_closes[:original_len], dtype=float)
         lr = _np.diff(_np.log(arr))
         return lr
 
-    all_lr = _compute_lr(closes)
+    all_lr = _compute_lr(closes)  # Uses sliced closes inside function
     # Align by dates: result dates correspond to closes[1:] dates; select the last target_len
     target_len = len(result.dates)
     baseline_returns = all_lr[-target_len:]
@@ -521,13 +572,14 @@ def _compute_wavelet_node(state: StockState) -> dict:
         "instrument_id": ohlc.get("instrument_id"),
         "analysis_start": analysis_start,
         "analysis_end": analysis_end,
+        "boundary_stabilized": (extended_len > original_len),
     }
 
     # Write outputs
     from ..stocks.db import _write_json, utcnow_iso  # reuse internal writer
 
     coeffs_doc = to_coefficients_json(ticker=slug, result=result)
-    coeffs_doc["metadata"].update({"analysis_start": analysis_start, "analysis_end": analysis_end})
+    coeffs_doc["metadata"].update(meta)  # Includes stabilized flag
     coeffs_doc["generated_at"] = utcnow_iso()
     _write_json(paths.analysis_wavelet_coeffs_json(slug), coeffs_doc)
 
@@ -541,10 +593,19 @@ def _compute_wavelet_node(state: StockState) -> dict:
     try:
         lvl = int(getattr(settings, "wavelet_level", 5))
         price_result = compute_modwt_logprice(dates=dates, closes=closes, level=lvl, wavelet="sym4")
+
+        # Truncate price result
+        if extended_len > original_len:
+            if len(price_result.dates) > original_len:
+                price_result.dates = price_result.dates[:original_len]
+                price_result.details = [d[:original_len] for d in price_result.details]
+                price_result.smooth = price_result.smooth[:original_len]
+                price_result.meta["coverage"]["end_date"] = (
+                    price_result.dates[-1] if price_result.dates else None
+                )
+
         price_coeffs_doc = to_coefficients_json(ticker=slug, result=price_result)
-        price_coeffs_doc["metadata"].update(
-            {"analysis_start": analysis_start, "analysis_end": analysis_end}
-        )
+        price_coeffs_doc["metadata"].update(meta)
         price_coeffs_doc["generated_at"] = utcnow_iso()
         _write_json(paths.analysis_wavelet_coeffs_logprice_json(slug), price_coeffs_doc)
 
@@ -555,6 +616,30 @@ def _compute_wavelet_node(state: StockState) -> dict:
             wavelet="sym4",
             max_level=6,  # Use consistent max level for MRA consistency
         )
+
+        # Truncate reconstructed series
+        if extended_len > original_len:
+            # recon_dates corresponds to input dates (extended)
+            recon_dates = recon_dates[:original_len]
+            for key in recon_map:
+                if isinstance(recon_map[key], list) and len(recon_map[key]) > original_len:
+                    recon_map[key] = recon_map[key][:original_len]
+
+            # COI boundaries are indices.
+            # With stabilization, the "end" boundary (reliable data end) effectively moves
+            # into the extension. We should clamp it to the original length.
+            # E.g. if valid region was [0, 100] in 110-len array, and we slice to 100,
+            # the valid region becomes [0, 100].
+            # If valid region was [0, 105] (stabilized), slice to 100 -> [0, 100].
+            # So we cap the end index at original_len.
+            new_boundaries = {}
+            for k, (start, end) in coi_boundaries.items():
+                new_end = min(end, original_len)
+                new_boundaries[k] = (start, new_end)
+            coi_boundaries = new_boundaries
+
+            recon_meta["boundary_stabilized"] = True
+
         # Add COI boundaries to metadata for downstream use
         recon_meta["coi_boundaries"] = {k: list(v) for k, v in coi_boundaries.items()}
         recon_doc = to_reconstructed_prices_json(
@@ -574,6 +659,90 @@ def _compute_wavelet_node(state: StockState) -> dict:
         write_meta(paths, slug, meta_doc)
     except Exception:
         _logger.warning("stocks.wavelet: failed to update meta", exc_info=True)
+
+    return {}
+
+
+def _compute_boundary_extension_node(state: StockState) -> dict:
+    """Compute boundary extension for trend filter stabilization.
+
+    Extends the time series with forecasted values to mitigate edge effects
+    in trend filters. The extension is saved to analysis/boundary_extension.json.
+    """
+    settings: Settings = state["settings"]
+    instrument = state["instrument"]
+    slug = state.get("_slug") or instrument_id_to_slug(str(instrument.get("instrument_id")))
+    paths = state.get("_paths") or StockPaths(root=(Path(settings.output_dir) / "stocks"))
+
+    # Check if boundary extension is requested
+    requested = set(state.get("requested_artifacts") or [])
+    boundary_enabled = bool(getattr(settings, "boundary_extension", False))
+
+    if "analysis.boundary_extension" not in requested and not boundary_enabled:
+        return {}
+
+    # Load OHLC data
+    ohlc = read_primary_ohlc(paths, slug)
+    rows = ohlc.get("data", []) or []
+
+    if len(rows) < 30:  # Need reasonable history for forecasting
+        _logger.info(
+            "stocks.boundary_extension.skip: insufficient data (%d rows) for %s",
+            len(rows),
+            slug,
+        )
+        return {}
+
+    # Configure stabilization
+    strategy_name = getattr(settings, "boundary_strategy", "linear")
+    try:
+        strategy = ForecastStrategy(strategy_name)
+    except ValueError:
+        _logger.warning(
+            "stocks.boundary_extension: unknown strategy '%s', using linear", strategy_name
+        )
+        strategy = ForecastStrategy.LINEAR
+
+    config = StabilizationConfig(
+        enable_sanitization=bool(getattr(settings, "boundary_sanitization", False)),
+        strategy=strategy,
+        lookback_period=int(getattr(settings, "boundary_lookback", 30)),
+        extension_steps=int(getattr(settings, "boundary_steps", 10)),
+        noise_injection=bool(getattr(settings, "boundary_noise_injection", False)),
+    )
+
+    # Compute extension
+    try:
+        _extended_ohlc, extension_metadata = extend_ohlc_dict(ohlc, config)
+
+        # Add timestamps
+        extension_metadata["generated_at"] = utcnow_iso()
+        extension_metadata["depends_on"] = ["primary.ohlc_daily"]
+
+        # Write to analysis directory
+        from ..stocks.db import _write_json
+
+        _write_json(paths.analysis_boundary_extension_json(slug), extension_metadata)
+
+        _logger.info(
+            "stocks.boundary_extension: computed %d-step %s extension for %s",
+            config.extension_steps,
+            strategy.value,
+            slug,
+        )
+
+        # Update artifacts in meta
+        try:
+            meta_doc = read_meta(paths, slug)
+            meta_doc.setdefault("artifacts", {}).setdefault("analysis.boundary_extension", {})[
+                "last_updated"
+            ] = utcnow_iso()
+            write_meta(paths, slug, meta_doc)
+        except Exception:
+            _logger.warning("stocks.boundary_extension: failed to update meta", exc_info=True)
+
+    except Exception:
+        _logger.warning("stocks.boundary_extension: computation failed", exc_info=True)
 
     return {}
 
@@ -623,6 +792,7 @@ def build_stocks_graph() -> Any:
     graph.add_node("compute_volatility", _compute_volatility_node)
     graph.add_node("compute_sma", _compute_sma_node)
     graph.add_node("compute_wavelet", _compute_wavelet_node)
+    graph.add_node("compute_boundary_extension", _compute_boundary_extension_node)
     graph.add_node("commit_metadata", _commit_metadata_node)
     graph.add_node("render_report", _render_report_node)
     # New LLM nodes for news summarization and final 7d report
@@ -660,8 +830,11 @@ def build_stocks_graph() -> Any:
     # Always compute analysis when requested
     graph.add_edge("compute_returns", "compute_volatility")
     graph.add_edge("compute_volatility", "compute_sma")
-    # Wavelet is optional; run after SMA (node will check requested_artifacts)
-    graph.add_edge("compute_sma", "compute_wavelet")
+    # Boundary extension is optional; run after SMA and BEFORE wavelet
+    # This ensures wavelet analysis can use the extended data for stabilization
+    graph.add_edge("compute_sma", "compute_boundary_extension")
+    graph.add_edge("compute_boundary_extension", "compute_wavelet")
+    # Wavelet is optional; run after boundary extension (node will check requested_artifacts)
     graph.add_edge("compute_wavelet", "render_report")
 
     # Insert news summarization and report collation before commit metadata
