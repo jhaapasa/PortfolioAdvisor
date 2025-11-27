@@ -439,7 +439,7 @@ def render_candlestick_ohlcv_2y_wavelet_trends(
                     s_df["date"] = pd.to_datetime(s_df["date"], errors="coerce")
                     s_df = s_df.set_index("date").sort_index()
                     s = pd.to_numeric(s_df["value"], errors="coerce")
-                    s = s.reindex(tail.index).dropna(how="all")
+                    s = s.reindex(tail.index)  # Ensure alignment with main plot x-axis
                     if s.notna().sum() < max(30, int(0.1 * len(tail))):
                         continue
 
@@ -506,7 +506,7 @@ def render_candlestick_ohlcv_2y_wavelet_trends(
                     s_df["date"] = pd.to_datetime(s_df["date"], errors="coerce")
                     s_df = s_df.set_index("date").sort_index()
                     s = pd.to_numeric(s_df["value"], errors="coerce")
-                    s = s.reindex(tail.index).dropna(how="all")
+                    s = s.reindex(tail.index)  # Ensure alignment with main plot x-axis
                     if s.notna().sum() < max(30, int(0.1 * len(tail))):
                         continue
                     ap = mpf.make_addplot(
