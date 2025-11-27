@@ -89,6 +89,10 @@ The forecasting model creates the "right-hand side" buffer for the trend filter.
 *   **Description**: Fits a simple linear regression or low-degree polynomial to the recent local window.
 *   **Use Case**: Default. Fast, robust, captures immediate local momentum.
 *   **Implementation**: `numpy.polyfit` (degree 1 for linear).
+*   **Noise Behavior**: When `noise_injection=True`, uses a **Random Walk with Drift** model:
+    *   The linear slope provides the drift (expected direction).
+    *   Historical volatility (std of first differences) provides the step size.
+    *   Each step: `price[t] = price[t-1] + drift + N(0, volatility)`.
 *   **Pros**: No extra dependencies, extremely fast, minimal overfitting risk on short windows.
 *   **Cons**: Cannot capture complex non-linear dynamics or changing volatility.
 
@@ -102,6 +106,7 @@ The forecasting model creates the "right-hand side" buffer for the trend filter.
     *   **Kernel**: `ConstantKernel * RBF + WhiteKernel`.
         *   `RBF`: Models the smooth trend.
         *   `WhiteKernel`: Models the noise (heteroskedasticity component).
+*   **Noise Behavior**: When `noise_injection=True`, uses `sample_y()` to draw a sample path from the GP posterior distribution, rather than `predict()` which returns the mean.
 *   **Pros**: Captures non-linear local dynamics, provides probabilistic output (uncertainty) which can be useful for weighting.
 *   **Cons**: Requires `scikit-learn`, computationally more expensive (though negligible for short EOD series).
 
@@ -116,7 +121,28 @@ The forecasting model creates the "right-hand side" buffer for the trend filter.
     *   If `enable_sanitization`: Clean $Y_{train}$.
     *   Fit selected `ForecastModel`.
     *   Predict $k$ steps ahead.
+    *   **Continuity Adjustment**: Apply offset to ensure forecast starts exactly at the last real price (see 4.4).
     *   Append to original DataFrame.
+
+### 4.4. Continuity Adjustment
+
+A critical implementation detail ensures visual and mathematical continuity between the historical data and the forecast:
+
+*   **Problem**: The fitted model's prediction at $t_{now}$ may not exactly equal the last real price due to regression smoothing.
+*   **Solution**: Calculate `offset = last_real_price - model_anchor` where `model_anchor` is the model's prediction at the last real time point. Apply this offset to all forecasted values.
+*   **Result**: The extension always starts exactly at the last real price, preventing visual "jumps" in charts and ensuring downstream filters see a continuous series.
+
+### 4.5. Noise Injection (Stochastic Extension) - Optional
+
+By default, forecasters produce smooth (deterministic) extensions. For some downstream analyses (e.g., variance-based metrics, wavelet decomposition), a smooth future may introduce artifacts.
+
+*   **Config**: `noise_injection: bool = False`
+*   **Purpose**: Inject stochastic variance into the forecast to better simulate realistic future price behavior.
+*   **Linear Strategy**: Uses **Random Walk with Drift**:
+    *   Drift = linear regression slope (captures trend direction)
+    *   Step noise ~ $N(0, \sigma)$ where $\sigma$ = std of historical first differences
+    *   Produces a jagged path that mimics daily volatility
+*   **GP Strategy**: Uses posterior sampling via `sample_y()` instead of mean prediction, producing paths consistent with the learned covariance structure.
 
 ## 5. Data Flow
 
@@ -164,11 +190,27 @@ The existing candlestick charting module will be enhanced to overlay the boundar
     *   **Axis**: The x-axis will be automatically rescaled to include the future $k$ dates.
     *   **Indicator**: A vertical dashed line at $t_{now}$ (last real date) to visually separate historical data from the projection.
 
+### 6.3. Wavelet Integration
+
+The primary use case for boundary stabilization is to improve wavelet transform quality at $t_{now}$.
+
+*   **Pipeline Order**: Boundary extension runs *before* wavelet computation.
+*   **Process**:
+    1.  Load `boundary_extension.json` if it exists.
+    2.  Append extension prices/dates to the input series.
+    3.  Compute MODWT on the extended series (length $N + k$).
+    4.  Reconstruct log-price series from wavelet coefficients.
+    5.  **Truncate** all results back to length $N$ (original data only).
+*   **Effect**: Edge artifacts from the wavelet transform are pushed into the synthetic future segment, which is then discarded. The coefficients and reconstructed trends at $t_{now}$ are now mathematically stabilized.
+*   **Metadata**: `analysis/wavelet_reconstructed_prices.json` includes `boundary_stabilized: true` when extension was used.
+*   **Chart Output**: The `candle_ohlcv_2y_wavelet_trends.png` chart shows stabilized trends ending at the last real date (no future data displayed).
+
 ## 7. Implementation Plan
 
 ### 7.1. Location
 *   Source: `src/portfolio_advisor/trend/boundary.py`
-*   Tests: `tests/test_trend_boundary.py`
+*   Unit Tests: `tests/test_trend_boundary.py`
+*   Integration Tests: `tests/test_boundary_integration.py`
 
 ### 7.2. Dependencies
 *   **Core**: `numpy`, `pandas`.
@@ -210,13 +252,38 @@ class BoundaryStabilizer:
 ```
 
 ### 7.4. Tasks
-1.  **Core Logic**: Implement `BoundaryStabilizer` and strategies (Linear, GP).
-2.  **Serialization**: Implement the JSON writer to save `boundary_extension.json` alongside stock data.
-3.  **Visualization**: Update `src/portfolio_advisor/stocks/plotting.py` (or relevant plotting module) to draw the extension line.
-4.  **Integration**: Hook the stabilizer into the main analysis pipeline.
+1.  ✅ **Core Logic**: Implement `BoundaryStabilizer` and strategies (Linear, GP).
+2.  ✅ **Serialization**: Implement the JSON writer to save `boundary_extension.json` alongside stock data.
+3.  ✅ **Visualization**: Update `src/portfolio_advisor/stocks/plotting.py` to draw the extension line.
+4.  ✅ **Integration**: Hook the stabilizer into the main analysis pipeline.
+5.  ✅ **Wavelet Integration**: Enable wavelet analysis to use extension for boundary stabilization.
 
-## 8. Next Steps
-1.  Add `scikit-learn` to dependencies.
-2.  Implement `BoundaryStabilizer` core logic and serialization.
-3.  Update plotting utilities to support future extension rendering.
-4.  Run validation on a sample portfolio and inspect `candle_ohlcv` images and JSON output.
+## 8. Implementation Status
+
+**Status**: ✅ Complete
+
+### 8.1. Completed Tasks
+1.  ✅ Added `scikit-learn` to dependencies (`pyproject.toml`).
+2.  ✅ Implemented `BoundaryStabilizer` core logic with Linear and GP strategies.
+3.  ✅ Implemented JSON serialization to `output/stocks/{ticker}/analysis/boundary_extension.json`.
+4.  ✅ Updated `render_candlestick_ohlcv_1y` to overlay extension with dotted line and $t_{now}$ marker.
+5.  ✅ Integrated into stock analysis graph (`graphs/stocks.py`) with proper node ordering.
+6.  ✅ Implemented continuity adjustment for seamless extension start.
+7.  ✅ Implemented `noise_injection` option for stochastic extensions.
+8.  ✅ Integrated with wavelet analysis (extend → compute → truncate pattern).
+9.  ✅ Fixed wavelet trend overlay rendering for extended timelines.
+
+### 8.2. CLI Options
+*   `--enable-boundary-extension`: Enable the stabilization feature.
+*   `--boundary-strategy {linear,gaussian_process}`: Select forecasting method.
+*   `--boundary-steps N`: Number of future steps to generate.
+*   `--boundary-lookback N`: Historical lookback window for model fitting.
+*   `--boundary-noise-injection`: Enable stochastic noise in forecasts.
+
+### 8.3. Configuration
+Environment variables (or `.env`):
+*   `BOUNDARY_EXTENSION_ENABLED=true`
+*   `BOUNDARY_STRATEGY=linear`
+*   `BOUNDARY_STEPS=100`
+*   `BOUNDARY_LOOKBACK=300`
+*   `BOUNDARY_NOISE_INJECTION=false`

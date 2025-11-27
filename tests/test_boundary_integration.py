@@ -323,3 +323,4 @@ def test_boundary_extension_loaded_by_plotting(temp_stock_db, sample_ohlc_data):
     assert result_path is not None
     assert result_path.exists()
     assert result_path.name == "candle_ohlcv_1y.png"
+
