@@ -116,11 +116,26 @@ portfolio-advisor --mode extract-text --all-stocks --input-dir ./input --output-
 
 ## Configuration
 
-Settings are loaded from environment variables (`.env` file in development) and can be overridden via CLI flags.
+Settings are loaded from environment variables (`.env` file in development) and can be overridden via CLI flags. Copy `env.example` to `.env` and fill in your values.
+
+### CLI Flag to Environment Variable Mapping
+
+Most CLI flags map directly to environment variables (e.g., `--log-level` → `LOG_LEVEL`). Notable exceptions:
+
+| CLI Flag | Environment Variable |
+|----------|---------------------|
+| `--input-dir` | (CLI only, required) |
+| `--output-dir` | (CLI only, required) |
+| `--enable-boundary-extension` | `BOUNDARY_EXTENSION` |
+| `--include-news` | `INCLUDE_NEWS_REPORT` |
+| `--portfolio-dir` | `PORTFOLIO_DIR` |
 
 ### Required Settings
-- `INPUT_DIR` / `--input-dir` — Directory containing portfolio data files
-- `OUTPUT_DIR` / `--output-dir` — Directory for analysis output (created if needed)
+- `--input-dir` — Directory containing portfolio data files (CLI only)
+- `--output-dir` — Directory for analysis output, created if needed (CLI only)
+
+### Paths
+- `PORTFOLIO_DIR` — Override portfolio state directory (defaults to `<output_dir>/portfolio`)
 
 ### API Keys
 - `OPENAI_API_KEY` — OpenAI API key (required for LLM features; stub mode if absent)
