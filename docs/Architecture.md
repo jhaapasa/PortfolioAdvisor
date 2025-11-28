@@ -1,6 +1,8 @@
 # Architecture Overview
 
-This document explains the overall design of PortfolioAdvisor: the data flow through its agents, the state management approach, configuration options, and guidance for extending the system.
+This document explains the overall design of PortfolioAdvisor: the data flow through its agents, state management approach, and guidance for extending the system.
+
+For CLI usage and configuration options, see [README.md](../README.md).
 
 ## Design Goals
 - **Simplicity:** Reliable end-to-end portfolio ingestion and analysis with minimal setup
@@ -11,13 +13,17 @@ This document explains the overall design of PortfolioAdvisor: the data flow thr
 
 ## High-Level Flow
 
-The system follows a linear pipeline with two parallel fan-out/fan-in stages:
+The system supports multiple analysis modes orchestrated through LangGraph pipelines:
+
+### Portfolio Analysis Pipeline
+
+The main portfolio flow follows a linear pipeline with parallel fan-out/fan-in stages:
 
 1. **CLI Initialization**
    - Parses arguments and environment variables
    - Builds application settings
    - Configures logging and LLM caching
-   - Invokes the main analysis entrypoint
+   - Invokes the appropriate analysis entrypoint
 
 2. **Agent Orchestration** (LangGraph state machine)
    ```
@@ -30,6 +36,21 @@ The system follows a linear pipeline with two parallel fan-out/fan-in stages:
    - Structured holdings data (`resolved_positions.json`)
    - Portfolio persistence (`output/portfolio/`)
 
+### Stock Analysis Pipeline
+
+Per-stock data collection and analysis:
+```
+fetch_ohlc → compute_returns → compute_volatility → compute_sma →
+[optional: compute_wavelet] → [optional: fetch_news] → generate_charts → END
+```
+
+### Basket Analysis Pipeline
+
+Group analysis for stock baskets:
+```
+load_basket → update_stock_data → compute_metrics → generate_narrative → END
+```
+
 ### Agent Pipeline Stages
 
 - **Ingestion:** Discovers and extracts plain text from input files
@@ -37,6 +58,8 @@ The system follows a linear pipeline with two parallel fan-out/fan-in stages:
 - **Parse (fan-out):** LLM-powered extraction of holdings from each document in parallel
 - **Resolve (fan-out):** Symbol resolution via Polygon.io for each holding in parallel
 - **Analyst:** Generates narrative summary of portfolio composition and insights
+- **Stock Update:** Fetches OHLC data, computes technical indicators, generates charts
+- **Basket Narrative:** Generates LLM-powered analysis reports for stock groups
 
 ## LangGraph State Contract
 
@@ -64,7 +87,9 @@ These channels accumulate results across parallel fan-out operations:
 
 ## Agent Implementations
 
-### Ingestion Agent (`agents/ingestion.py`)
+### Portfolio Agents
+
+#### Ingestion Agent (`agents/ingestion.py`)
 **Purpose:** Extract structured text from heterogeneous input files
 
 **Capabilities:**
@@ -76,7 +101,7 @@ These channels accumulate results across parallel fan-out operations:
 
 **Output:** Populates `raw_docs` state channel
 
-### Planner Agent (`agents/planner.py`)
+#### Planner Agent (`agents/planner.py`)
 **Purpose:** Analyze document structure and create parsing strategy
 
 **Capabilities:**
@@ -86,7 +111,7 @@ These channels accumulate results across parallel fan-out operations:
 
 **Output:** Populates `plan` state field
 
-### Parser Agent (`agents/parser.py`)
+#### Parser Agent (`agents/parser.py`)
 **Purpose:** Extract holdings from documents using LLM-powered structured output
 
 **Capabilities:**
@@ -98,7 +123,7 @@ These channels accumulate results across parallel fan-out operations:
 
 **Output:** Accumulates results in `parsed_holdings` channel
 
-### Resolver Agent (`agents/resolver.py` + `tools/symbol_resolver.py`)
+#### Resolver Agent (`agents/resolver.py` + `tools/symbol_resolver.py`)
 **Purpose:** Resolve ticker symbols to canonical instrument identifiers
 
 **Capabilities:**
@@ -111,7 +136,7 @@ These channels accumulate results across parallel fan-out operations:
 
 **Output:** Populates `resolved_holdings` and `unresolved_entities` channels
 
-### Analyst Agent (`agents/analyst.py`)
+#### Analyst Agent (`agents/analyst.py`)
 **Purpose:** Generate portfolio analysis report
 
 **Capabilities:**
@@ -121,6 +146,42 @@ These channels accumulate results across parallel fan-out operations:
 - Identifies notable positions and concentrations
 
 **Output:** Populates `analysis` state field
+
+### Stock and Basket Agents
+
+#### News Summary Agent (`agents/news_summary.py`)
+**Purpose:** Aggregate and summarize news articles for stocks
+
+**Capabilities:**
+- Fetches recent news from Polygon.io
+- Downloads and caches article HTML
+- Generates LLM-powered news summaries
+- Integrates with 7-day stock reports
+
+#### Basket Narrative Agent (`agents/basket_narrative.py`)
+**Purpose:** Generate narrative reports for stock baskets
+
+**Capabilities:**
+- Aggregates per-stock metrics across basket
+- Computes basket-level performance statistics
+- Generates LLM-powered comparative analysis
+- Produces Markdown reports with metrics JSON
+
+#### Stock Report Collator (`agents/stock_report_collator.py`)
+**Purpose:** Collate 7-day stock news and technical reports
+
+**Capabilities:**
+- Combines news summaries with technical indicators
+- Structures multi-section Markdown reports
+- Embeds chart references for visual reports
+
+#### Market Comparison Agent (`agents/market_comparison.py`)
+**Purpose:** Compute market benchmark comparisons (planned feature)
+
+**Capabilities:**
+- Computes beta coefficients vs. market indices
+- Calculates Sharpe ratios across time horizons
+- Generates risk-adjusted performance comparisons
 
 ## Data Models
 
@@ -157,48 +218,57 @@ Represents validated, normalized holdings after resolution:
   - `currency` — Trading currency
   - `confidence` — Resolution confidence score (0.0–1.0)
 
-## Configuration System
+### Market Models (`models/market.py`)
+State objects for market comparison features:
 
-Settings are defined in `src/portfolio_advisor/config.py` using Pydantic for validation. Configuration is loaded from environment variables (via `.env` in development) and can be overridden with CLI flags.
+- **`ReferenceTickerMetrics`** — Benchmark ticker metrics (returns, Sharpe, volatility)
+- **`StockMarketComparison`** — Per-stock comparison vs. benchmarks
+- **`PortfolioMarketMetrics`** — Portfolio-level aggregated metrics
+- **`MarketContext`** — State container for market comparison pipeline
 
-### Configuration Categories
+## Feature Areas
 
-**Required Paths**
-- `INPUT_DIR` / `--input-dir` — Portfolio data directory
-- `OUTPUT_DIR` / `--output-dir` — Analysis output directory
+### Wavelet Analysis
+Multi-timescale signal decomposition for trend detection:
+- MODWT (Maximal Overlap Discrete Wavelet Transform) with Symlet-4 filter
+- Configurable decomposition levels (1–8)
+- Trend extraction via wavelet coefficient reconstruction
+- Visualization overlays on candlestick charts
 
-**LLM Provider**
-- `OPENAI_API_KEY` — API authentication (stub mode if absent)
-- `OPENAI_MODEL` — Model selection (default: `gpt-4o-mini`)
-- `OPENAI_BASE_URL` — Custom endpoint (optional)
-- `TEMPERATURE` — Sampling temperature (default: `0.2`)
-- `MAX_TOKENS` — Output token limit (optional)
-- `REQUEST_TIMEOUT_S` — API timeout (default: `60`)
+See: `docs/research/research-wavelet-analysis.md`
 
-**Parser Tuning**
-- `PARSER_MAX_RETRIES` — Retry limit for validation errors (default: `2`)
-- `PARSER_MAX_DOC_CHARS` — Document truncation limit (default: `20000`)
+### Cone of Influence (COI)
+Wavelet boundary effect handling:
+- Progressive distortion computation for edge effects
+- Filter-weighted COI calculation
+- Visualization of confidence regions in wavelet plots
 
-**Symbol Resolution**
-- `POLYGON_API_KEY` — Polygon.io authentication (offline mode if absent)
-- `POLYGON_BASE_URL` — API endpoint override (optional)
-- `POLYGON_TIMEOUT_S` — Request timeout (default: `30`)
-- `RESOLVER_DEFAULT_LOCALE` — Fallback market locale (default: `us`)
-- `RESOLVER_PREFERRED_MICS` — Comma-separated exchange codes (e.g., `XNYS,XNAS`)
-- `RESOLVER_CONFIDENCE_THRESHOLD` — Minimum match score (default: `0.8`)
+See: `docs/research/cone-of-influence-*.md`
 
-**Logging and Observability**
-- `LOG_LEVEL` — Verbosity (DEBUG, INFO, WARNING, ERROR)
-- `LOG_FORMAT` — Output format (plain, json)
-- `VERBOSE` — Enable verbose agent logging
-- `AGENT_PROGRESS` — Show LangGraph execution details
+### Boundary Stabilization
+Price extension for trend filter edge stabilization:
+- Linear and Gaussian Process forecasting strategies
+- Noise injection for stochastic extensions
+- Continuity adjustment for seamless extension start
+- Integration with wavelet analysis pipeline
 
-**Caching**
-- `SKIP_LLM_CACHE` — Force cache bypass (writes still occur)
-- Cache database: `./cache/langchain_cache.sqlite3`
+See: `docs/design/feature-design-boundary-stabilization.md`
 
-### Stub Mode Behavior
-When `OPENAI_API_KEY` is not provided, the system uses a stub LLM that returns placeholder responses. This enables testing and demos without API costs.
+### Article Text Extraction
+HTML-to-text extraction for news articles:
+- Local LLM extraction via Ollama (ReaderLM-v2)
+- Batch processing across portfolio tickers
+- Experimental feature (disabled by default)
+
+See: `docs/design/feature-design-article-text-extraction.md`
+
+### News Integration
+Stock news fetching and summarization:
+- Per-ticker news from Polygon.io
+- Article HTML caching
+- 7-day news + technical reports
+
+See: `docs/design/feature-design-stock-news.md`
 
 ## Logging and Error Handling
 
@@ -215,7 +285,7 @@ When `OPENAI_API_KEY` is not provided, the system uses a stub LLM that returns p
 - File I/O errors include file paths and context
 - LLM validation errors include retry count and schema details
 - Network errors include endpoint and timeout information
-- All exceptions inherit from custom base classes for type-safe handling
+- All exceptions inherit from custom base classes in `errors.py` for type-safe handling
 
 ## Extensibility Guide
 
@@ -241,7 +311,7 @@ When `OPENAI_API_KEY` is not provided, the system uses a stub LLM that returns p
 1. Create module in `stocks/` (e.g., `momentum.py`)
 2. Implement computation function with clear inputs/outputs
 3. Add to stock analysis graph in `graphs/stocks.py`
-4. Update file-based database schema in `stock-analysis-plan.md`
+4. Update file-based database schema in `docs/design/stock-analysis-plan.md`
 5. Add integration tests with sample OHLC data
 
 ### Customizing LLM Prompts
@@ -255,46 +325,68 @@ When `OPENAI_API_KEY` is not provided, the system uses a stub LLM that returns p
 PortfolioAdvisor/
 ├── src/portfolio_advisor/       # Core application
 │   ├── agents/                  # LangGraph agent nodes
+│   │   ├── analyst.py           # Portfolio report generation
+│   │   ├── basket_narrative.py  # Basket analysis reports
 │   │   ├── ingestion.py         # File discovery and text extraction
+│   │   ├── market_comparison.py # Market benchmark comparisons
+│   │   ├── news_summary.py      # News aggregation and summarization
 │   │   ├── parser.py            # LLM-powered holdings extraction
 │   │   ├── planner.py           # Document analysis and strategy
 │   │   ├── resolver.py          # Symbol resolution orchestration
-│   │   ├── analyst.py           # Report generation
-│   │   └── news_summary.py      # News aggregation and summarization
+│   │   └── stock_report_collator.py  # 7-day report collation
 │   ├── graphs/                  # LangGraph pipeline definitions
 │   │   ├── baskets.py           # Basket analysis workflow
 │   │   └── stocks.py            # Stock data collection workflow
 │   ├── models/                  # Pydantic data models
 │   │   ├── canonical.py         # Post-resolution holdings
+│   │   ├── market.py            # Market comparison state objects
 │   │   └── parsed.py            # Pre-resolution holdings
+│   ├── portfolio/               # Portfolio state management
+│   │   └── persistence.py       # Portfolio persistence and history
 │   ├── services/                # External API clients
-│   │   ├── polygon_client.py    # Polygon.io REST API wrapper
-│   │   └── ollama_service.py    # Local LLM service (experimental)
+│   │   ├── ollama_service.py    # Local LLM service for text extraction
+│   │   └── polygon_client.py    # Polygon.io REST API wrapper
 │   ├── stocks/                  # Stock analysis modules
 │   │   ├── analysis.py          # Returns, volatility, SMAs
-│   │   ├── db.py                # File-based stock database
-│   │   ├── news.py              # News fetching and extraction
-│   │   ├── paths.py             # Database path management
+│   │   ├── article_extraction.py # HTML-to-text extraction
+│   │   ├── coi_distortion.py    # Cone of influence calculations
+│   │   ├── coi_distortion_advanced.py  # Advanced COI methods
+│   │   ├── db.py                # File-based stock database & paths
+│   │   ├── news.py              # News fetching and caching
 │   │   ├── plotting.py          # Chart generation
 │   │   └── wavelet.py           # Wavelet decomposition
 │   ├── tools/                   # Reusable utilities
 │   │   └── symbol_resolver.py   # Ticker resolution logic
+│   ├── trend/                   # Trend analysis modules
+│   │   └── boundary.py          # Boundary stabilization
 │   ├── utils/                   # Helper functions
 │   │   ├── fs.py                # Filesystem utilities
 │   │   └── slug.py              # Path-safe name generation
+│   ├── analyze.py               # Analysis entrypoint
 │   ├── cli.py                   # Command-line interface
 │   ├── config.py                # Settings and environment handling
+│   ├── errors.py                # Custom exception classes
 │   ├── graph.py                 # Main portfolio analysis graph
-│   ├── analyze.py               # Analysis entrypoint
-│   └── llm.py                   # LLM client factory
+│   ├── io_utils.py              # I/O utilities
+│   ├── llm.py                   # LLM client factory
+│   └── logging_config.py        # Logging configuration
 ├── tests/                       # Comprehensive test suite
 │   ├── test_*_agent.py          # Agent unit tests
 │   ├── test_*_graph.py          # Graph integration tests
 │   └── test_*_integration.py    # End-to-end tests
 ├── docs/                        # Technical documentation
 │   ├── Architecture.md          # This file
-│   ├── stock-analysis-plan.md   # Stock data design
-│   └── feature-design-*.md      # Feature specifications
+│   ├── design/                  # Feature design documents
+│   │   ├── stock-analysis-plan.md
+│   │   └── feature-design-*.md
+│   ├── implementation/          # Implementation notes
+│   │   ├── IMPLEMENTATION_STATUS.md
+│   │   └── *-implementation.md
+│   ├── research/                # Research and analysis notes
+│   │   ├── research-wavelet-analysis.md
+│   │   └── cone-of-influence-*.md
+│   └── thirdparty/              # External API documentation
+│       └── polygon-io-api-guide.md
 ├── scripts/                     # Development automation
 │   ├── bootstrap                # Environment setup
 │   ├── format                   # Code formatting (Black)
@@ -307,3 +399,10 @@ PortfolioAdvisor/
 │   └── stocks/                  # Stock database and charts
 └── cache/                       # LLM response cache
 ```
+
+## Related Documentation
+
+- **README.md** — Quickstart, CLI usage, and configuration reference
+- **docs/design/** — Feature specifications and design documents
+- **docs/implementation/** — Implementation notes and status tracking
+- **docs/research/** — Technical research on wavelet analysis and COI
