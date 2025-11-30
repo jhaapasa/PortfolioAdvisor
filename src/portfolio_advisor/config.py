@@ -84,6 +84,13 @@ class Settings(BaseSettings):
     boundary_sanitization: bool = Field(default=False, alias="BOUNDARY_SANITIZATION")
     boundary_noise_injection: bool = Field(default=False, alias="BOUNDARY_NOISE_INJECTION")
 
+    # L1 trend filtering (sparse trend extraction)
+    l1_trend: bool = Field(default=False, alias="L1_TREND")
+    l1_strategy: str = Field(default="yamada", alias="L1_STRATEGY")
+    l1_timescale: str = Field(default="monthly", alias="L1_TIMESCALE")
+    l1_lambda: float = Field(default=50.0, alias="L1_LAMBDA")
+    l1_auto_tune: bool = Field(default=False, alias="L1_AUTO_TUNE")  # Deprecated
+
     # Ollama configuration for article text extraction
     ollama_base_url: str = Field(default="http://localhost:11434", alias="OLLAMA_BASE_URL")
     ollama_timeout_s: int = Field(default=120, alias="OLLAMA_TIMEOUT_S")
@@ -125,6 +132,22 @@ class Settings(BaseSettings):
         if int(value) < 1 or int(value) > 8:
             raise ValueError("WAVELET_LEVEL must be between 1 and 8")
         return int(value)
+
+    @field_validator("l1_strategy")
+    @classmethod
+    def _validate_l1_strategy(cls, value: str) -> str:
+        valid = {"yamada", "bic", "manual"}
+        if value.lower() not in valid:
+            raise ValueError(f"L1_STRATEGY must be one of {valid}, got '{value}'")
+        return value.lower()
+
+    @field_validator("l1_timescale")
+    @classmethod
+    def _validate_l1_timescale(cls, value: str) -> str:
+        valid = {"weekly", "monthly", "quarterly"}
+        if value.lower() not in valid:
+            raise ValueError(f"L1_TIMESCALE must be one of {valid}, got '{value}'")
+        return value.lower()
 
 
 @dataclass

@@ -1,4 +1,12 @@
 # **Adaptive Trend & Risk Analysis Subsystem**
+
+> **Module Implementation Status**:
+> - Module 1 (Boundary Stabilization): ✅ Implemented — See `docs/design/feature-design-boundary-stabilization.md`
+> - Module 2 (Sparse Trend Extraction): ✅ Implemented — See `docs/design/feature-design-sparse-trend-extraction.md`
+> - Module 3 (Multiscale Spectral): ✅ Partial — MODWT wavelet analysis implemented
+> - Module 4 (Regime Detection): ⏳ Not Started
+> - Module 5 (Risk Envelope): ⏳ Not Started
+
 The following summary provides the functional basis for a **Risk Analysis Subsystem**. This breakdown translates the signal processing architecture into distinct logical modules suitable for a software requirements specification (SRS), focusing on data flow, algorithmic logic, and output requirements.
 
 ## **System Overview**
@@ -7,7 +15,9 @@ The subsystem is responsible for ingesting raw financial time series data and pr
 
 ## **Functional Modules**
 
-### **1. Functional Module: Boundary Stabilization & Extension**
+### **1. Functional Module: Boundary Stabilization & Extension** ✅
+**Status:** Implemented — `src/portfolio_advisor/trend/boundary.py`
+
 **Requirement:** The system must mitigate "edge effects" inherent in signal processing filters by synthetically extending the time series into the future before analysis.
 
 *   **Input:** Raw OHLC (Open, High, Low, Close) time series vector up to time $t_{now}$.
@@ -18,7 +28,9 @@ The subsystem is responsible for ingesting raw financial time series data and pr
 *   **Output:** Augmented Time Series vector of length $N + k$.
 *   **Implementation Challenge:** The forecasting model must prioritize local momentum and volatility preservation over long-term directional accuracy. Latency constraints may require incremental learning or pre-trained model weights rather than full retraining at every time step.
 
-### **2. Functional Module: Sparse Trend Extraction ($\ell_1$ Optimization)**
+### **2. Functional Module: Sparse Trend Extraction ($\ell_1$ Optimization)** ✅
+**Status:** Implemented — `src/portfolio_advisor/trend/l1_filter.py`
+
 **Requirement:** The system must isolate the underlying trend as a piecewise linear function, explicitly identifying points where the trend velocity changes ("knots").
 
 *   **Input:** Augmented Time Series.
@@ -31,7 +43,9 @@ The subsystem is responsible for ingesting raw financial time series data and pr
     *   **Velocity Signal:** A piecewise constant step function representing the current trend rate.
     *   **Knot Map:** A boolean vector indicating timestamps where structural breaks occurred.
 
-### **3. Functional Module: Multiscale Spectral Verification**
+### **3. Functional Module: Multiscale Spectral Verification** ⚠️
+**Status:** Partial — MODWT wavelet analysis implemented, verification logic pending
+
 **Requirement:** The system must decompose market volatility into distinct frequency bands to validate whether trend changes are supported by broad-spectrum momentum.
 
 *   **Input:** Augmented Time Series.
@@ -40,7 +54,9 @@ The subsystem is responsible for ingesting raw financial time series data and pr
     2.  Separate the signal into orthogonal components: Trend (low frequency), Cycle (medium frequency), and Noise (high frequency).
 *   **Output:** A multi-channel vector of volatility contributions across different timescales (e.g., Weekly, Monthly, Quarterly components) at time $t_{now}$.
 
-### **4. Functional Module: Probabilistic Regime Detection**
+### **4. Functional Module: Probabilistic Regime Detection** ⏳
+**Status:** Not Started
+
 **Requirement:** The system must calculate a real-time probability that the current market regime (e.g., "Steady Uptrend") has ended, rather than relying on binary indicators.
 
 *   **Input:**
@@ -51,7 +67,9 @@ The subsystem is responsible for ingesting raw financial time series data and pr
     2.  Update the joint probability distribution of the run length and the process parameters (mean drift, variance).
 *   **Output:** A probability scalar $P(Change_t)$ indicating the likelihood of a regime shift at the current timestamp.
 
-### **5. Functional Module: Adaptive Risk Envelope Construction**
+### **5. Functional Module: Adaptive Risk Envelope Construction** ⏳
+**Status:** Not Started
+
 **Requirement:** The system must generate dynamic upper and lower price targets (risk bands) that adapt to non-normal return distributions and current regime uncertainty.
 
 *   **Input:**

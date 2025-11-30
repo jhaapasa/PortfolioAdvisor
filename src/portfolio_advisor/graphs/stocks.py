@@ -35,6 +35,7 @@ from ..stocks.plotting import (
     plot_wavelet_variance_spectrum,
     render_candlestick_ohlcv_1y,
     render_candlestick_ohlcv_2y_wavelet_trends,
+    render_l1_trend_chart,
 )
 from ..stocks.wavelet import (
     compute_histograms,
@@ -47,6 +48,7 @@ from ..stocks.wavelet import (
     to_volatility_histogram_json,
 )
 from ..trend.boundary import ForecastStrategy, StabilizationConfig, extend_ohlc_dict
+from ..trend.l1_filter import L1TrendFilter, to_trend_json
 from ..utils.slug import instrument_id_to_slug
 
 
@@ -172,6 +174,11 @@ def _check_db_state_node(state: StockState) -> dict:
     )
     if want_wavelet:
         updates.append("analysis.wavelet_modwt")
+
+    # Allow L1 trend filtering when requested via settings flag or explicit request
+    want_l1_trend = bool(getattr(settings, "l1_trend", False)) or ("analysis.trend_l1" in requested)
+    if want_l1_trend:
+        updates.append("analysis.trend_l1")
 
     _logger.info(
         "stocks.check_db_state: slug=%s requested=%s coverage_end=%s updates=%s fetch_news=%s",
@@ -484,6 +491,21 @@ def _render_report_node(state: StockState) -> dict:
             _logger.info("stocks.render_report: wrote %s", out2)
     except Exception:
         _logger.warning("stocks.render_report: 2y wavelet overlay rendering failed", exc_info=True)
+
+    # Render L1 trend chart (if trend_l1.json exists)
+    try:
+        import json as _json
+
+        trend_path = paths.analysis_trend_l1_json(slug)
+        if trend_path.exists():
+            with trend_path.open("r", encoding="utf-8") as fh:
+                trend_doc = _json.load(fh)
+            out3 = render_l1_trend_chart(ticker_dir, ohlc, trend_doc)
+            if out3 is not None:
+                _logger.info("stocks.render_report: wrote %s", out3)
+    except Exception:
+        _logger.warning("stocks.render_report: L1 trend rendering failed", exc_info=True)
+
     return {}
 
 
@@ -747,6 +769,135 @@ def _compute_boundary_extension_node(state: StockState) -> dict:
     return {}
 
 
+def _compute_l1_trend_node(state: StockState) -> dict:
+    """Compute L1 trend filtering for sparse trend extraction.
+
+    Uses the boundary-extended data if available to stabilize the trend
+    at the current time point, then truncates back to original length.
+    """
+    settings: Settings = state["settings"]
+    instrument = state["instrument"]
+    slug = state.get("_slug") or instrument_id_to_slug(str(instrument.get("instrument_id")))
+    paths = state.get("_paths") or StockPaths(root=(Path(settings.output_dir) / "stocks"))
+
+    # Check if L1 trend analysis is requested
+    requested = set(state.get("requested_artifacts") or [])
+    l1_enabled = bool(getattr(settings, "l1_trend", False))
+
+    if "analysis.trend_l1" not in requested and not l1_enabled:
+        return {}
+
+    # Load OHLC data
+    ohlc = read_primary_ohlc(paths, slug)
+    rows = ohlc.get("data", []) or []
+
+    if len(rows) < 30:  # Need reasonable history for trend filtering
+        _logger.info(
+            "stocks.l1_trend.skip: insufficient data (%d rows) for %s",
+            len(rows),
+            slug,
+        )
+        return {}
+
+    import pandas as pd
+
+    # Convert to DataFrame
+    df = pd.DataFrame(rows)
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.set_index("date").sort_index()
+    df["close"] = pd.to_numeric(df["close"], errors="coerce")
+
+    original_len = len(df)
+    close_series = df["close"].copy()
+
+    # Load boundary extension if available for stabilization
+    extension_path = paths.analysis_boundary_extension_json(slug)
+    if extension_path.exists():
+        try:
+            from ..stocks.db import _read_json
+
+            ext_doc = _read_json(extension_path)
+            extension = ext_doc.get("extension", [])
+            if extension:
+                ext_dates = pd.DatetimeIndex([pd.to_datetime(item["date"]) for item in extension])
+                ext_prices = [float(item["price"]) for item in extension]
+                ext_series = pd.Series(ext_prices, index=ext_dates, name="close")
+                close_series = pd.concat([close_series, ext_series])
+                _logger.info(
+                    "stocks.l1_trend: using boundary extension (%d steps) for stabilization",
+                    len(extension),
+                )
+        except Exception:
+            _logger.warning("stocks.l1_trend: failed to load boundary extension", exc_info=True)
+
+    # Compute L1 trend
+    try:
+        # Get L1 parameters from settings
+        lambda_param = float(getattr(settings, "l1_lambda", 50.0))
+        strategy = str(getattr(settings, "l1_strategy", "yamada"))
+        timescale = str(getattr(settings, "l1_timescale", "monthly"))
+        auto_tune = bool(getattr(settings, "l1_auto_tune", False))
+
+        # Backwards compat: auto_tune overrides strategy
+        if auto_tune:
+            strategy = "bic"
+
+        filter_obj = L1TrendFilter(
+            lambda_param=lambda_param,
+            strategy=strategy,
+            timescale=timescale,
+        )
+        result = filter_obj.fit_transform(close_series)
+
+        # Truncate back to original length if extended
+        if len(close_series) > original_len:
+            result.trend = result.trend.iloc[:original_len]
+            result.velocity = result.velocity.iloc[:original_len]
+            result.knots = result.knots.iloc[:original_len]
+            _logger.info(
+                "stocks.l1_trend: truncated from %d to %d points",
+                len(close_series),
+                original_len,
+            )
+
+        # Serialize and save (pass original prices for MSE calculation)
+        ticker = ohlc.get("primary_ticker") or slug
+        original_prices = df["close"].iloc[:original_len]
+        trend_doc = to_trend_json(
+            ticker, result, original_length=original_len, original_prices=original_prices
+        )
+        trend_doc["generated_at"] = utcnow_iso()
+        trend_doc["depends_on"] = ["primary.ohlc_daily"]
+
+        from ..stocks.db import _write_json
+
+        _write_json(paths.analysis_trend_l1_json(slug), trend_doc)
+
+        _logger.info(
+            "stocks.l1_trend: computed for %s (strategy=%s, timescale=%s, λ=%.2f, knots=%d)",
+            slug,
+            result.strategy,
+            result.timescale or "n/a",
+            result.lambda_used,
+            result.knot_count(),
+        )
+
+        # Update artifacts in meta
+        try:
+            meta_doc = read_meta(paths, slug)
+            meta_doc.setdefault("artifacts", {}).setdefault("analysis.trend_l1", {})[
+                "last_updated"
+            ] = utcnow_iso()
+            write_meta(paths, slug, meta_doc)
+        except Exception:
+            _logger.warning("stocks.l1_trend: failed to update meta", exc_info=True)
+
+    except Exception:
+        _logger.warning("stocks.l1_trend: computation failed", exc_info=True)
+
+    return {}
+
+
 def _commit_metadata_node(state: StockState) -> dict:
     settings: Settings = state["settings"]
     instrument = state["instrument"]
@@ -793,6 +944,7 @@ def build_stocks_graph() -> Any:
     graph.add_node("compute_sma", _compute_sma_node)
     graph.add_node("compute_wavelet", _compute_wavelet_node)
     graph.add_node("compute_boundary_extension", _compute_boundary_extension_node)
+    graph.add_node("compute_l1_trend", _compute_l1_trend_node)
     graph.add_node("commit_metadata", _commit_metadata_node)
     graph.add_node("render_report", _render_report_node)
     # New LLM nodes for news summarization and final 7d report
@@ -835,7 +987,9 @@ def build_stocks_graph() -> Any:
     graph.add_edge("compute_sma", "compute_boundary_extension")
     graph.add_edge("compute_boundary_extension", "compute_wavelet")
     # Wavelet is optional; run after boundary extension (node will check requested_artifacts)
-    graph.add_edge("compute_wavelet", "render_report")
+    graph.add_edge("compute_wavelet", "compute_l1_trend")
+    # L1 trend is optional; run after wavelet (node will check requested_artifacts)
+    graph.add_edge("compute_l1_trend", "render_report")
 
     # Insert news summarization and report collation before commit metadata
     def _route_after_render(state: StockState):

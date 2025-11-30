@@ -15,13 +15,14 @@ Tracked improvements and future work for PortfolioAdvisor, organized by category
 See: `docs/design/feature-design-market-overview-report.md`
 
 ### Trend & Risk Analysis Subsystem
-- [ ] Implement ℓ₁ trend filtering for sparse piecewise-linear trend extraction
+- [x] Implement ℓ₁ trend filtering for sparse piecewise-linear trend extraction *(November 2024)*
+- [x] Add knot detection for structural trend breaks *(November 2024)*
+- [x] Implement Yamada Equivalence for timescale-based lambda selection *(November 2024)*
 - [ ] Add Bayesian Online Change Point Detection (BOCPD) for regime shifts
 - [ ] Build adaptive risk envelope construction using quantile regression
 - [ ] Implement multiscale spectral verification via MODWT decomposition
-- [ ] Add knot detection for structural trend breaks
 
-See: `docs/design/feature-requirements-trend-and-risk-module.md`
+See: `docs/design/feature-requirements-trend-and-risk-module.md`, `docs/implementation/l1-trend-filtering-implementation.md`
 
 ### Advanced Risk Metrics
 - [ ] Sortino ratio (downside deviation)
@@ -90,7 +91,7 @@ See: `docs/design/feature-requirements-trend-and-risk-module.md`
 ## Optimization
 
 ### Computational Performance
-- [ ] Implement O(n) primal-dual solver for ℓ₁ trend filtering (tridiagonal optimization)
+- [ ] Implement O(n) primal-dual solver for ℓ₁ trend filtering (tridiagonal optimization) — *Currently using CVXPY+OSQP which is O(n) with sparse matrix support*
 - [ ] Add incremental wavelet computation (avoid full recompute on new data)
 - [ ] Parallelize stock updates across portfolio (configurable worker count)
 - [ ] Cache aligned return series in `MarketMetricsService` to avoid recomputation
@@ -120,5 +121,5 @@ See: `docs/design/feature-requirements-trend-and-risk-module.md`
 
 ---
 
-*Last updated: November 2024*
+*Last updated: November 30, 2024*
 

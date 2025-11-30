@@ -27,6 +27,8 @@ dependencies = [
   "PyWavelets>=1.5.0",
   "httpx>=0.27.0",
   "scikit-learn>=1.5.0",
+  "cvxpy>=1.5.0",
+  "ecos>=2.0.12",
 ]
 
 [project.optional-dependencies]
