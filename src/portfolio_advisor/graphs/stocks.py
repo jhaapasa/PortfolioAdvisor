@@ -832,11 +832,21 @@ def _compute_l1_trend_node(state: StockState) -> dict:
 
     # Compute L1 trend
     try:
-        # Get lambda parameter from settings or use auto-tuning
+        # Get L1 parameters from settings
         lambda_param = float(getattr(settings, "l1_lambda", 50.0))
+        strategy = str(getattr(settings, "l1_strategy", "yamada"))
+        timescale = str(getattr(settings, "l1_timescale", "monthly"))
         auto_tune = bool(getattr(settings, "l1_auto_tune", False))
 
-        filter_obj = L1TrendFilter(lambda_param=lambda_param, auto_tune=auto_tune)
+        # Backwards compat: auto_tune overrides strategy
+        if auto_tune:
+            strategy = "bic"
+
+        filter_obj = L1TrendFilter(
+            lambda_param=lambda_param,
+            strategy=strategy,
+            timescale=timescale,
+        )
         result = filter_obj.fit_transform(close_series)
 
         # Truncate back to original length if extended
@@ -864,11 +874,12 @@ def _compute_l1_trend_node(state: StockState) -> dict:
         _write_json(paths.analysis_trend_l1_json(slug), trend_doc)
 
         _logger.info(
-            "stocks.l1_trend: computed for %s (lambda=%.2f, knots=%d, bic=%.2f)",
+            "stocks.l1_trend: computed for %s (strategy=%s, timescale=%s, λ=%.2f, knots=%d)",
             slug,
+            result.strategy,
+            result.timescale or "n/a",
             result.lambda_used,
             result.knot_count(),
-            result.bic,
         )
 
         # Update artifacts in meta

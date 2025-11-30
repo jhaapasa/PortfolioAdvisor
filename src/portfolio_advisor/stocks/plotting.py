@@ -698,6 +698,53 @@ def plot_wavelet_variance_spectrum(
     return out_path
 
 
+def _compute_piecewise_constant_velocity(trend: Any, knot_mask: Any) -> Any:
+    """Compute truly piecewise constant velocity from trend and knot positions.
+
+    The L1 trend is piecewise linear, so velocity (slope) should be constant
+    between knots. However, due to numerical solver precision, np.diff() produces
+    slightly varying values. This function computes the average slope per segment
+    to get a clean piecewise constant velocity.
+
+    Args:
+        trend: The piecewise linear trend series (pd.Series).
+        knot_mask: Boolean mask indicating knot positions (pd.Series).
+
+    Returns:
+        Piecewise constant velocity series (pd.Series).
+    """
+    import numpy as np
+    import pandas as pd
+
+    n = len(trend)
+    velocity = pd.Series(np.zeros(n), index=trend.index, name="velocity")
+
+    # Find segment boundaries (indices where knots occur)
+    knot_indices = np.where(knot_mask.values)[0]
+
+    # Add start (0) and end (n-1) as implicit boundaries
+    boundaries = np.concatenate([[0], knot_indices, [n - 1]])
+    boundaries = np.unique(boundaries)  # Remove duplicates and sort
+
+    # Compute constant slope for each segment
+    for i in range(len(boundaries) - 1):
+        start_idx = boundaries[i]
+        end_idx = boundaries[i + 1]
+
+        if end_idx > start_idx:
+            # Compute slope as (y_end - y_start) / (x_end - x_start)
+            # For daily data, x difference is just the number of days
+            dy = trend.iloc[end_idx] - trend.iloc[start_idx]
+            dx = end_idx - start_idx
+            slope = dy / dx
+
+            # Assign constant slope to all points in segment
+            # Include end_idx in this segment (will be overwritten by next if it's a knot)
+            velocity.iloc[start_idx : end_idx + 1] = slope
+
+    return velocity
+
+
 def render_l1_trend_chart(
     output_dir: Path,
     ohlc: dict[str, Any],
@@ -727,7 +774,10 @@ def render_l1_trend_chart(
     # Extract trend data
     trend_series_data = trend_data.get("trend", [])
     knot_dates = trend_data.get("knots", [])
-    lambda_used = trend_data.get("lambda", 0.0)
+    # Support both old "lambda" key and new "lambda_l1" key
+    lambda_used = trend_data.get("lambda_l1") or trend_data.get("lambda", 0.0)
+    strategy = trend_data.get("strategy", "")
+    timescale = trend_data.get("timescale", "")
 
     if not trend_series_data:
         _logger.info("plotting.l1_trend.skip: no trend data")
@@ -759,16 +809,16 @@ def render_l1_trend_chart(
     aligned_df = tail.loc[common_dates]
     aligned_trend = trend_series.loc[common_dates]
 
-    # Compute velocity (first difference of trend)
-    velocity = aligned_trend.diff()
-    velocity.iloc[0] = velocity.iloc[1] if len(velocity) > 1 else 0.0
-
-    # Compute residuals
-    residuals = aligned_df["close"] - aligned_trend
-
     # Identify knot positions
     knot_dates_dt = [pd.to_datetime(d) for d in knot_dates]
     knot_mask = aligned_trend.index.isin(knot_dates_dt)
+
+    # Compute velocity as TRUE piecewise constant (not diff which has numerical noise)
+    # Between knots, the slope is constant - compute average slope per segment
+    velocity = _compute_piecewise_constant_velocity(aligned_trend, knot_mask)
+
+    # Compute residuals
+    residuals = aligned_df["close"] - aligned_trend
 
     # Prepare output
     report_dir = output_dir / "report"
@@ -848,7 +898,14 @@ def render_l1_trend_chart(
                 )
 
             ax1.set_ylabel("Price ($)")
-            ax1.set_title(f"L1 Trend Structure (λ={lambda_used:.1f})")
+            # Build title with strategy/timescale info if available
+            if timescale:
+                title = f"L1 Trend Structure ({timescale}, λ={lambda_used:.1f})"
+            elif strategy:
+                title = f"L1 Trend Structure ({strategy}, λ={lambda_used:.1f})"
+            else:
+                title = f"L1 Trend Structure (λ={lambda_used:.1f})"
+            ax1.set_title(title)
             ax1.legend(loc="upper left", framealpha=0.9, fontsize=9)
             ax1.grid(True, alpha=0.3)
 

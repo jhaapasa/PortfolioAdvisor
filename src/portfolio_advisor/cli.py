@@ -106,15 +106,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Compute L1 sparse trend extraction (piecewise linear trend with knot detection)",
     )
     p.add_argument(
+        "--l1-strategy",
+        choices=["yamada", "bic", "manual"],
+        default=None,
+        help="Lambda selection strategy: yamada (HP-equivalent), bic (auto-tune), manual",
+    )
+    p.add_argument(
+        "--l1-timescale",
+        choices=["weekly", "monthly", "quarterly"],
+        default=None,
+        help="Target timescale for Yamada method (default: monthly)",
+    )
+    p.add_argument(
         "--l1-lambda",
         type=float,
         default=None,
-        help="L1 regularization parameter (higher = smoother, default: 50.0)",
+        help="L1 regularization parameter for manual strategy (default: 50.0)",
     )
     p.add_argument(
         "--l1-auto-tune",
         action="store_true",
-        help="Auto-tune L1 lambda parameter using BIC grid search",
+        help="[Deprecated] Use --l1-strategy=bic instead",
     )
 
     # Env overrides

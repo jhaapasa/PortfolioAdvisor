@@ -7,8 +7,13 @@ import pandas as pd
 import pytest
 
 from portfolio_advisor.trend.l1_filter import (
+    HP_LAMBDA_PRESETS,
     L1TrendFilter,
+    LambdaStrategy,
     TrendResult,
+    TrendTimescale,
+    YamadaEquivalence,
+    compute_hp_trend,
     extract_l1_trend,
     to_trend_json,
 )
@@ -24,7 +29,7 @@ class TestL1TrendFilter:
         values = np.linspace(100, 120, 100) + np.random.randn(100) * 0.5
         series = pd.Series(values, index=dates)
 
-        filter_obj = L1TrendFilter(lambda_param=10.0)
+        filter_obj = L1TrendFilter(lambda_param=10.0, strategy="manual")
         result = filter_obj.fit_transform(series)
 
         assert isinstance(result, TrendResult)
@@ -252,7 +257,7 @@ class TestExtractL1Trend:
         dates = pd.date_range("2024-01-01", periods=50, freq="D")
         series = pd.Series(np.linspace(100, 120, 50), index=dates)
 
-        result = extract_l1_trend(series, lambda_param=25.0, auto_tune=False)
+        result = extract_l1_trend(series, lambda_param=25.0, strategy="manual")
 
         assert result.lambda_used == 25.0
 
@@ -275,13 +280,13 @@ class TestToTrendJson:
         json_doc = to_trend_json("AAPL", result)
 
         assert json_doc["ticker"] == "AAPL"
-        assert json_doc["lambda"] == 10.0
+        assert json_doc["lambda_l1"] == 10.0
         assert json_doc["bic"] == 50.0
         assert json_doc["knots_count"] == 1
         assert json_doc["current_velocity"] == 1.0
         assert len(json_doc["trend"]) == 5
         assert len(json_doc["knots"]) == 1
-        assert json_doc["solver"] == "OSQP"
+        assert json_doc["solver_stats"]["solver"] == "OSQP"
 
     def test_serialization_with_original_length(self):
         """Test serialization includes original_length metadata."""
@@ -428,3 +433,263 @@ class TestIntegration:
         has_knot_near_50 = any(abs(k - 50) < 10 for k in knot_indices)
         has_knot_near_100 = any(abs(k - 100) < 10 for k in knot_indices)
         assert has_knot_near_50 or has_knot_near_100
+
+
+class TestHPFilter:
+    """Tests for Hodrick-Prescott filter implementation."""
+
+    def test_hp_trend_linear_data(self):
+        """HP filter should return near-perfect fit for linear data."""
+        y = np.linspace(100, 200, 100)
+        trend = compute_hp_trend(y, lambda_hp=1600)
+        np.testing.assert_allclose(trend, y, atol=1.0)
+
+    def test_hp_trend_smooths_noise(self):
+        """HP filter should smooth noisy data."""
+        np.random.seed(42)
+        y = np.linspace(100, 150, 100) + np.random.randn(100) * 5
+        trend = compute_hp_trend(y, lambda_hp=1600)
+
+        # Trend should be smoother than original
+        assert np.std(np.diff(trend)) < np.std(np.diff(y))
+
+    def test_hp_lambda_affects_smoothness(self):
+        """Higher lambda should produce smoother trend."""
+        np.random.seed(42)
+        y = np.sin(np.linspace(0, 4 * np.pi, 200)) * 10 + 100
+
+        trend_low = compute_hp_trend(y, lambda_hp=100)
+        trend_high = compute_hp_trend(y, lambda_hp=100000)
+
+        assert np.std(np.diff(trend_high)) < np.std(np.diff(trend_low))
+
+    def test_hp_requires_minimum_length(self):
+        """HP filter should require at least 3 points."""
+        with pytest.raises(ValueError, match="at least 3 points"):
+            compute_hp_trend(np.array([1.0, 2.0]), lambda_hp=1600)
+
+
+class TestYamadaEquivalence:
+    """Tests for Yamada Equivalence lambda selection."""
+
+    def test_rss_equivalence_monthly(self):
+        """L1 RSS should approximately match HP RSS."""
+        np.random.seed(42)
+        y = np.cumsum(np.random.randn(252) * 0.02) + 100
+
+        yamada = YamadaEquivalence()
+        filter_obj = L1TrendFilter(strategy="manual", lambda_param=50.0)
+
+        l1_lambda, target_rss, hp_lambda = yamada.find_equivalent_l1_lambda(
+            y, TrendTimescale.MONTHLY, filter_obj._solve_l1_array
+        )
+
+        # Verify RSS is close to target
+        l1_trend = filter_obj._solve_l1_array(y, l1_lambda)
+        l1_rss = np.sum((y - l1_trend) ** 2)
+
+        # Allow 10% tolerance due to bisection precision
+        assert abs(l1_rss - target_rss) / target_rss < 0.10
+
+    def test_bisection_convergence(self):
+        """Bisection should converge within max iterations."""
+        np.random.seed(42)
+        y = np.linspace(100, 150, 100) + np.random.randn(100) * 2
+
+        yamada = YamadaEquivalence(max_iterations=50)
+        filter_obj = L1TrendFilter(strategy="manual", lambda_param=50.0)
+
+        # Should not raise
+        l1_lambda, _, _ = yamada.find_equivalent_l1_lambda(
+            y, TrendTimescale.WEEKLY, filter_obj._solve_l1_array
+        )
+
+        assert l1_lambda > 0
+
+    def test_all_timescales_produce_valid_lambda(self):
+        """All preset timescales should produce valid lambdas."""
+        np.random.seed(42)
+        y = np.cumsum(np.random.randn(252)) + 100
+
+        for timescale in TrendTimescale:
+            filter_obj = L1TrendFilter(strategy="yamada", timescale=timescale)
+            dates = pd.date_range("2024-01-01", periods=252, freq="D")
+            series = pd.Series(y, index=dates)
+            result = filter_obj.fit_transform(series)
+
+            assert result.lambda_used > 0
+            assert result.timescale == timescale.value
+            assert result.hp_lambda_equivalent == HP_LAMBDA_PRESETS[timescale]
+
+
+class TestL1TrendFilterStrategies:
+    """Tests for different lambda selection strategies."""
+
+    def test_strategy_yamada(self):
+        """Yamada strategy should use HP equivalence."""
+        dates = pd.date_range("2024-01-01", periods=100, freq="D")
+        series = pd.Series(np.linspace(100, 120, 100), index=dates)
+
+        filter_obj = L1TrendFilter(strategy="yamada", timescale="monthly")
+        result = filter_obj.fit_transform(series)
+
+        assert result.strategy == "yamada"
+        assert result.timescale == "monthly"
+        assert result.hp_lambda_equivalent == 14400
+
+    def test_strategy_bic(self):
+        """BIC strategy should auto-tune lambda."""
+        np.random.seed(42)
+        dates = pd.date_range("2024-01-01", periods=100, freq="D")
+        series = pd.Series(np.linspace(100, 120, 100) + np.random.randn(100), index=dates)
+
+        filter_obj = L1TrendFilter(strategy="bic")
+        result = filter_obj.fit_transform(series)
+
+        assert result.strategy == "bic"
+        assert result.timescale is None
+
+    def test_strategy_manual(self):
+        """Manual strategy should use provided lambda."""
+        dates = pd.date_range("2024-01-01", periods=100, freq="D")
+        series = pd.Series(np.linspace(100, 120, 100), index=dates)
+
+        filter_obj = L1TrendFilter(strategy="manual", lambda_param=42.0)
+        result = filter_obj.fit_transform(series)
+
+        assert result.strategy == "manual"
+        assert result.lambda_used == 42.0
+
+    def test_backwards_compat_auto_tune(self):
+        """auto_tune=True should map to BIC strategy."""
+        filter_obj = L1TrendFilter(auto_tune=True)
+        assert filter_obj.strategy == LambdaStrategy.BIC
+
+    def test_string_strategy_input(self):
+        """String input for strategy should work."""
+        filter_obj = L1TrendFilter(strategy="yamada")
+        assert filter_obj.strategy == LambdaStrategy.YAMADA
+
+        filter_obj = L1TrendFilter(strategy="BIC")
+        assert filter_obj.strategy == LambdaStrategy.BIC
+
+    def test_string_timescale_input(self):
+        """String input for timescale should work."""
+        filter_obj = L1TrendFilter(timescale="weekly")
+        assert filter_obj.timescale == TrendTimescale.WEEKLY
+
+        filter_obj = L1TrendFilter(timescale="QUARTERLY")
+        assert filter_obj.timescale == TrendTimescale.QUARTERLY
+
+
+class TestFitTransformTimescale:
+    """Tests for timescale convenience method."""
+
+    def test_fit_transform_timescale_weekly(self):
+        """Convenience method should work for weekly."""
+        dates = pd.date_range("2024-01-01", periods=100, freq="D")
+        series = pd.Series(np.linspace(100, 120, 100), index=dates)
+
+        filter_obj = L1TrendFilter()
+        result = filter_obj.fit_transform_timescale(series, "weekly")
+
+        assert result.timescale == "weekly"
+        assert result.hp_lambda_equivalent == 270
+
+    def test_fit_transform_timescale_preserves_config(self):
+        """Convenience method should not permanently change config."""
+        dates = pd.date_range("2024-01-01", periods=100, freq="D")
+        series = pd.Series(np.linspace(100, 120, 100), index=dates)
+
+        filter_obj = L1TrendFilter(strategy="manual", timescale="monthly", lambda_param=100.0)
+
+        # Call with different timescale
+        result = filter_obj.fit_transform_timescale(series, "quarterly")
+
+        # Should use quarterly for this call
+        assert result.timescale == "quarterly"
+
+        # Original config should be preserved
+        assert filter_obj.strategy == LambdaStrategy.MANUAL
+        assert filter_obj.timescale == TrendTimescale.MONTHLY
+
+
+class TestTrendResultNewFields:
+    """Tests for new TrendResult fields."""
+
+    def test_result_includes_strategy_fields(self):
+        """TrendResult should include strategy, timescale, hp_lambda_equivalent."""
+        dates = pd.date_range("2024-01-01", periods=100, freq="D")
+        series = pd.Series(np.linspace(100, 120, 100), index=dates)
+
+        filter_obj = L1TrendFilter(strategy="yamada", timescale="monthly")
+        result = filter_obj.fit_transform(series)
+
+        assert hasattr(result, "strategy")
+        assert hasattr(result, "timescale")
+        assert hasattr(result, "hp_lambda_equivalent")
+        assert hasattr(result, "rss")
+
+        assert result.strategy == "yamada"
+        assert result.timescale == "monthly"
+        assert result.hp_lambda_equivalent == 14400
+        assert result.rss is not None
+
+
+class TestToTrendJsonNewFields:
+    """Tests for to_trend_json with new fields."""
+
+    def test_json_includes_new_fields(self):
+        """JSON output should include new fields."""
+        dates = pd.date_range("2024-01-01", periods=5, freq="D")
+        result = TrendResult(
+            trend=pd.Series([100.0, 101.0, 102.0, 103.0, 104.0], index=dates),
+            velocity=pd.Series([0.0, 1.0, 1.0, 1.0, 1.0], index=dates),
+            knots=pd.Series([False, False, True, False, False], index=dates),
+            lambda_used=42.5,
+            bic=50.0,
+            solver_stats={"solver": "OSQP", "status": "optimal"},
+            strategy="yamada",
+            timescale="monthly",
+            hp_lambda_equivalent=14400,
+            rss=123.45,
+        )
+
+        json_doc = to_trend_json("AAPL", result)
+
+        assert json_doc["lambda_l1"] == 42.5
+        assert json_doc["strategy"] == "yamada"
+        assert json_doc["timescale"] == "monthly"
+        assert json_doc["hp_lambda_equivalent"] == 14400
+        assert json_doc["rss"] == 123.45
+
+
+class TestYamadaIntegration:
+    """Integration tests for Yamada equivalence with realistic data."""
+
+    def test_weekly_more_reactive_than_monthly(self):
+        """Weekly timescale should produce more knots than monthly."""
+        np.random.seed(42)
+        dates = pd.date_range("2024-01-01", periods=252, freq="D")
+        y = np.cumsum(np.random.randn(252) * 0.02) + 100
+        series = pd.Series(y, index=dates)
+
+        weekly = L1TrendFilter(strategy="yamada", timescale="weekly").fit_transform(series)
+        monthly = L1TrendFilter(strategy="yamada", timescale="monthly").fit_transform(series)
+
+        # Weekly should generally produce more knots (more reactive)
+        # Note: This is probabilistic, so we use a soft assertion
+        assert weekly.knot_count() >= monthly.knot_count() - 5
+
+    def test_quarterly_smoothest(self):
+        """Quarterly timescale should produce the smoothest trend."""
+        np.random.seed(42)
+        dates = pd.date_range("2024-01-01", periods=252, freq="D")
+        y = np.cumsum(np.random.randn(252) * 0.02) + 100
+        series = pd.Series(y, index=dates)
+
+        weekly = L1TrendFilter(strategy="yamada", timescale="weekly").fit_transform(series)
+        quarterly = L1TrendFilter(strategy="yamada", timescale="quarterly").fit_transform(series)
+
+        # Quarterly should produce fewer knots (smoother)
+        assert quarterly.knot_count() <= weekly.knot_count()

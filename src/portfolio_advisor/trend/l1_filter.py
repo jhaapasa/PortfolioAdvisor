@@ -9,12 +9,19 @@ Mathematical formulation:
     minimize (1/2)||y - x||_2^2 + λ||Dx||_1
 
 where D is the second difference matrix.
+
+Lambda Selection Strategies:
+    - YAMADA: HP-equivalent via Yamada method (matches HP filter RSS)
+    - BIC: Data-driven Bayesian Information Criterion
+    - MANUAL: User-specified lambda value
 """
 
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any
 
 import cvxpy as cp
@@ -30,6 +37,221 @@ _logger = logging.getLogger(__name__)
 _KNOT_RELATIVE_TOLERANCE = 1e-4
 
 
+# =============================================================================
+# Enums and Constants
+# =============================================================================
+
+
+class TrendTimescale(Enum):
+    """Predefined timescales for trend extraction.
+
+    These correspond to typical trading cycle lengths and map to HP filter
+    lambda values calibrated for daily trading data (252 days/year).
+    """
+
+    WEEKLY = "weekly"  # ~5 trading day cycles
+    MONTHLY = "monthly"  # ~21 trading day cycles
+    QUARTERLY = "quarterly"  # ~63 trading day cycles
+
+
+class LambdaStrategy(Enum):
+    """Strategy for selecting the L1 regularization parameter.
+
+    - YAMADA: Derives lambda from HP filter equivalence (recommended for timescale targeting)
+    - BIC: Data-driven selection via Bayesian Information Criterion
+    - MANUAL: User-specified lambda value
+    """
+
+    YAMADA = "yamada"
+    BIC = "bic"
+    MANUAL = "manual"
+
+
+# HP lambda presets for daily trading data (252 days/year)
+# Derived from Ravn-Uhlig scaling: λ ∝ T^4
+# Reference: Ravn, M. O., & Uhlig, H. (2002). "On Adjusting the HP Filter
+# for the Frequency of Observations."
+HP_LAMBDA_PRESETS: dict[TrendTimescale, float] = {
+    TrendTimescale.WEEKLY: 270,  # ~5 trading days
+    TrendTimescale.MONTHLY: 14_400,  # ~21 trading days (Ravn-Uhlig monthly)
+    TrendTimescale.QUARTERLY: 1_600_000,  # ~63 trading days
+}
+
+
+# =============================================================================
+# HP Filter Implementation
+# =============================================================================
+
+
+def compute_hp_trend(y: np.ndarray, lambda_hp: float) -> np.ndarray:
+    """Compute Hodrick-Prescott filter trend.
+
+    Solves: min_x (1/2)||y - x||_2^2 + λ||D²x||_2^2
+
+    Uses closed-form solution: x = (I + λ D'D)^{-1} y
+
+    Args:
+        y: Input time series (1D array).
+        lambda_hp: HP smoothing parameter.
+
+    Returns:
+        HP trend estimate as numpy array.
+    """
+    n = len(y)
+    if n < 3:
+        raise ValueError(f"HP filter requires at least 3 points, got {n}")
+
+    # Build second difference matrix D (n-2 x n)
+    D = np.zeros((n - 2, n))
+    for i in range(n - 2):
+        D[i, i] = 1
+        D[i, i + 1] = -2
+        D[i, i + 2] = 1
+
+    # Closed-form solution: x = (I + λ D'D)^{-1} y
+    identity = np.eye(n)
+    A = identity + lambda_hp * (D.T @ D)
+
+    # Solve linear system (more stable than matrix inversion)
+    return np.linalg.solve(A, y)
+
+
+# =============================================================================
+# Yamada Equivalence
+# =============================================================================
+
+
+class YamadaEquivalence:
+    """Implements the Yamada Equivalence method for deriving L1 lambda from HP benchmarks.
+
+    The Yamada method calibrates λ_L1 such that the Sum of Squared Residuals (SSR)
+    of the L1 filter matches that of an HP filter with known frequency-based λ_HP.
+    This creates a bridge between established economic benchmarks and sparse estimation.
+
+    Reference: Yamada, H. (2018). "A New Method for Specifying the Tuning
+    Parameter of ℓ₁ Trend Filtering."
+
+    Attributes:
+        tolerance: Convergence tolerance for bisection search.
+        max_iterations: Maximum bisection iterations.
+        lambda_min: Lower bound for lambda search.
+        lambda_max: Upper bound for lambda search.
+    """
+
+    def __init__(
+        self,
+        tolerance: float = 1e-3,
+        max_iterations: int = 50,
+        lambda_min: float = 0.01,
+        lambda_max: float = 10_000,
+    ):
+        """Initialize Yamada equivalence calculator.
+
+        Args:
+            tolerance: Convergence tolerance for lambda (default 1e-3).
+            max_iterations: Maximum bisection iterations (default 50).
+            lambda_min: Lower bound for lambda search (default 0.01).
+            lambda_max: Upper bound for lambda search (default 10000).
+        """
+        self.tolerance = tolerance
+        self.max_iterations = max_iterations
+        self.lambda_min = lambda_min
+        self.lambda_max = lambda_max
+
+    def find_equivalent_l1_lambda(
+        self,
+        y: np.ndarray,
+        timescale: TrendTimescale,
+        l1_solver: Callable[[np.ndarray, float], np.ndarray],
+    ) -> tuple[float, float, float]:
+        """Find L1 lambda that produces equivalent RSS to HP filter.
+
+        Args:
+            y: Input time series (1D numpy array).
+            timescale: Target timescale (WEEKLY, MONTHLY, QUARTERLY).
+            l1_solver: Callable that solves L1 problem given (y, lambda).
+
+        Returns:
+            Tuple of (l1_lambda, target_rss, hp_lambda).
+        """
+        lambda_hp = HP_LAMBDA_PRESETS[timescale]
+        hp_trend = compute_hp_trend(y, lambda_hp)
+        target_rss = float(np.sum((y - hp_trend) ** 2))
+
+        l1_lambda = self._bisection_search(y, target_rss, l1_solver)
+
+        _logger.debug(
+            "Yamada equivalence: timescale=%s, λ_HP=%.0f, target_RSS=%.2f → λ_L1=%.4f",
+            timescale.value,
+            lambda_hp,
+            target_rss,
+            l1_lambda,
+        )
+
+        return l1_lambda, target_rss, lambda_hp
+
+    def _bisection_search(
+        self,
+        y: np.ndarray,
+        target_rss: float,
+        l1_solver: Callable[[np.ndarray, float], np.ndarray],
+    ) -> float:
+        """Bisection search to find L1 lambda matching target RSS.
+
+        RSS is monotonically increasing with lambda, guaranteeing convergence.
+
+        Args:
+            y: Input time series.
+            target_rss: Target residual sum of squares from HP filter.
+            l1_solver: Callable that solves L1 problem given (y, lambda).
+
+        Returns:
+            L1 lambda value that produces RSS close to target_rss.
+        """
+        lambda_min = self.lambda_min
+        lambda_max = self.lambda_max
+
+        # Track last valid result in case of solver failures
+        last_valid_lambda = (lambda_min + lambda_max) / 2
+
+        for iteration in range(self.max_iterations):
+            if (lambda_max - lambda_min) < self.tolerance:
+                break
+
+            lambda_test = (lambda_min + lambda_max) / 2
+
+            try:
+                trend = l1_solver(y, lambda_test)
+                rss = float(np.sum((y - trend) ** 2))
+                last_valid_lambda = lambda_test
+
+                _logger.debug(
+                    "Yamada bisection iter=%d: λ=%.4f, RSS=%.2f (target=%.2f)",
+                    iteration,
+                    lambda_test,
+                    rss,
+                    target_rss,
+                )
+
+                if rss > target_rss:
+                    # L1 is too smooth (high lambda produces more residual), reduce lambda
+                    lambda_max = lambda_test
+                else:
+                    # L1 is too rough (low lambda fits too closely), increase lambda
+                    lambda_min = lambda_test
+
+            except Exception as e:
+                _logger.warning(
+                    "Yamada bisection: solver failed at λ=%.4f: %s",
+                    lambda_test,
+                    e,
+                )
+                # Try to continue with adjusted bounds
+                lambda_max = lambda_test
+
+        return (lambda_min + lambda_max) / 2 if lambda_min < lambda_max else last_valid_lambda
+
+
 @dataclass
 class TrendResult:
     """Result of L1 trend filtering.
@@ -38,9 +260,13 @@ class TrendResult:
         trend: The extracted piecewise linear trend signal
         velocity: First difference of the trend (slope/rate of change)
         knots: Boolean mask where trend velocity changes (structural breaks)
-        lambda_used: The regularization parameter used
+        lambda_used: The L1 regularization parameter used
         bic: Bayesian Information Criterion value for the fit
         solver_stats: Additional solver statistics
+        strategy: Lambda selection strategy used ('yamada', 'bic', 'manual')
+        timescale: Target timescale for Yamada method (None for other strategies)
+        hp_lambda_equivalent: Corresponding HP lambda (for Yamada method)
+        rss: Residual sum of squares
     """
 
     trend: pd.Series
@@ -49,6 +275,11 @@ class TrendResult:
     lambda_used: float
     bic: float
     solver_stats: dict[str, Any]
+    # New fields for Yamada equivalence
+    strategy: str = field(default="manual")
+    timescale: str | None = field(default=None)
+    hp_lambda_equivalent: float | None = field(default=None)
+    rss: float | None = field(default=None)
 
     def knot_dates(self) -> list[str]:
         """Return list of dates where knots occur."""
@@ -65,13 +296,20 @@ class L1TrendFilter:
     Implements the ℓ1 trend filter which finds a piecewise linear trend
     by penalizing the ℓ1 norm of the second difference of the trend.
 
+    Supports multiple lambda selection strategies:
+    - YAMADA: HP-equivalent via Yamada method (recommended for timescale targeting)
+    - BIC: Data-driven Bayesian Information Criterion
+    - MANUAL: User-specified lambda value
+
     Parameters:
-        lambda_param: Regularization strength (higher = smoother/fewer knots)
-        auto_tune: If True, automatically tune lambda using BIC
+        lambda_param: Regularization strength for MANUAL strategy
+        strategy: Lambda selection strategy (yamada, bic, manual)
+        timescale: Target timescale for YAMADA strategy (weekly, monthly, quarterly)
+        auto_tune: Deprecated, use strategy='bic' instead
         solver: CVXPY solver to use (default: OSQP)
     """
 
-    # Lambda search range for auto-tuning
+    # Lambda search range for auto-tuning (BIC strategy)
     _LAMBDA_MIN = 0.1
     _LAMBDA_MAX = 1000.0
     _LAMBDA_GRID_SIZE = 20
@@ -81,29 +319,50 @@ class L1TrendFilter:
 
     def __init__(
         self,
-        lambda_param: float = 1.0,
+        lambda_param: float = 50.0,
+        strategy: LambdaStrategy | str = LambdaStrategy.YAMADA,
+        timescale: TrendTimescale | str = TrendTimescale.MONTHLY,
         auto_tune: bool = False,
         solver: str = "OSQP",
     ):
         """Initialize L1 trend filter.
 
         Args:
-            lambda_param: Regularization parameter (default 1.0)
-            auto_tune: Whether to auto-tune lambda using BIC grid search
+            lambda_param: Regularization parameter for MANUAL strategy (default 50.0)
+            strategy: Lambda selection strategy (default: yamada)
+            timescale: Target timescale for Yamada method (default: monthly)
+            auto_tune: Deprecated; use strategy='bic' instead
             solver: CVXPY solver name (OSQP, ECOS, or SCS)
         """
         if lambda_param <= 0:
             raise ValueError(f"lambda_param must be positive, got {lambda_param}")
 
+        # Handle string inputs for enums
+        if isinstance(strategy, str):
+            strategy = LambdaStrategy(strategy.lower())
+        if isinstance(timescale, str):
+            timescale = TrendTimescale(timescale.lower())
+
+        # Backwards compatibility: auto_tune=True implies BIC strategy
+        if auto_tune:
+            strategy = LambdaStrategy.BIC
+
         self.lambda_param = lambda_param
-        self.auto_tune = auto_tune
+        self.strategy = strategy
+        self.timescale = timescale
         self.solver = solver.upper()
+        self._yamada = YamadaEquivalence()
 
         if self.solver not in self._SOLVERS:
             raise ValueError(f"Unknown solver '{solver}'. Supported: {self._SOLVERS}")
 
     def fit_transform(self, series: pd.Series) -> TrendResult:
         """Extract trend from time series using L1 filtering.
+
+        Uses the configured lambda selection strategy:
+        - YAMADA: Derives lambda from HP filter equivalence at target timescale
+        - BIC: Searches for optimal lambda via grid search
+        - MANUAL: Uses the provided lambda_param
 
         Args:
             series: Input time series (e.g., close prices)
@@ -124,24 +383,46 @@ class L1TrendFilter:
             _logger.warning("L1TrendFilter: input contains NaN/inf values, forward filling")
             y = pd.Series(y).ffill().bfill().values
 
-        # Determine lambda (auto-tune or use provided)
-        if self.auto_tune:
+        # Determine lambda based on strategy
+        hp_lambda_equiv: float | None = None
+        target_rss: float | None = None
+        timescale_str: str | None = None
+
+        if self.strategy == LambdaStrategy.YAMADA:
+            lambda_opt, target_rss, hp_lambda_equiv = self._yamada.find_equivalent_l1_lambda(
+                y, self.timescale, self._solve_l1_array
+            )
+            timescale_str = self.timescale.value
+            _logger.info(
+                "L1TrendFilter: Yamada equivalence timescale=%s, λ_HP=%.0f → λ_L1=%.2f",
+                timescale_str,
+                hp_lambda_equiv,
+                lambda_opt,
+            )
+            bic_opt = 0.0  # Will be computed after solving
+
+        elif self.strategy == LambdaStrategy.BIC:
             lambda_opt, bic_opt = self._optimize_lambda(y)
             _logger.info(
-                "L1TrendFilter: auto-tuned lambda=%.2f (BIC=%.2f)",
+                "L1TrendFilter: BIC auto-tuned lambda=%.2f (BIC=%.2f)",
                 lambda_opt,
                 bic_opt,
             )
-        else:
+
+        else:  # MANUAL
             lambda_opt = self.lambda_param
             bic_opt = 0.0  # Will be computed after solving
 
         # Solve L1 trend filtering problem
         trend, solver_stats = self._solve_l1(y, lambda_opt)
 
-        # Compute BIC if not already done
-        if not self.auto_tune:
+        # Compute BIC if not already done (for YAMADA and MANUAL strategies)
+        if self.strategy != LambdaStrategy.BIC:
             bic_opt = self._compute_bic(y, trend)
+
+        # Compute RSS if not already done
+        if target_rss is None:
+            target_rss = float(np.sum((y - trend) ** 2))
 
         # Compute velocity (first difference)
         velocity = np.diff(trend, prepend=np.nan)
@@ -168,7 +449,58 @@ class L1TrendFilter:
             lambda_used=lambda_opt,
             bic=bic_opt,
             solver_stats=solver_stats,
+            strategy=self.strategy.value,
+            timescale=timescale_str,
+            hp_lambda_equivalent=hp_lambda_equiv,
+            rss=target_rss,
         )
+
+    def fit_transform_timescale(
+        self,
+        series: pd.Series,
+        timescale: TrendTimescale | str,
+    ) -> TrendResult:
+        """Convenience method to extract trend at a specific timescale.
+
+        Temporarily overrides the configured timescale and uses Yamada strategy.
+
+        Args:
+            series: Input time series
+            timescale: Target timescale (weekly, monthly, quarterly)
+
+        Returns:
+            TrendResult with trend at the specified timescale
+        """
+        if isinstance(timescale, str):
+            timescale = TrendTimescale(timescale.lower())
+
+        # Temporarily override settings
+        original_timescale = self.timescale
+        original_strategy = self.strategy
+
+        self.timescale = timescale
+        self.strategy = LambdaStrategy.YAMADA
+
+        try:
+            return self.fit_transform(series)
+        finally:
+            self.timescale = original_timescale
+            self.strategy = original_strategy
+
+    def _solve_l1_array(self, y: np.ndarray, lam: float) -> np.ndarray:
+        """Solve L1 problem and return just the trend array.
+
+        Wrapper for bisection search in Yamada equivalence.
+
+        Args:
+            y: Input signal (1D array)
+            lam: Regularization parameter
+
+        Returns:
+            Trend array (without solver stats)
+        """
+        trend, _ = self._solve_l1(y, lam)
+        return trend
 
     def _solve_l1(self, y: np.ndarray, lam: float) -> tuple[np.ndarray, dict[str, Any]]:
         """Solve the L1 trend filtering optimization problem.
@@ -361,25 +693,33 @@ class L1TrendFilter:
 def extract_l1_trend(
     series: pd.Series,
     lambda_param: float | None = None,
-    auto_tune: bool = True,
+    strategy: LambdaStrategy | str = LambdaStrategy.YAMADA,
+    timescale: TrendTimescale | str = TrendTimescale.MONTHLY,
+    auto_tune: bool = False,
 ) -> TrendResult:
     """Convenience function to extract L1 trend from a time series.
 
     Args:
         series: Input time series (e.g., close prices with DatetimeIndex)
-        lambda_param: Optional regularization parameter (if None, auto-tune)
-        auto_tune: Whether to auto-tune lambda (default True if lambda_param is None)
+        lambda_param: Regularization parameter for MANUAL strategy
+        strategy: Lambda selection strategy (yamada, bic, manual)
+        timescale: Target timescale for Yamada method (weekly, monthly, quarterly)
+        auto_tune: Deprecated; use strategy='bic' instead
 
     Returns:
         TrendResult with extracted trend, velocity, and knots
     """
+    # Handle backwards compatibility
+    if auto_tune:
+        strategy = LambdaStrategy.BIC
+
     if lambda_param is None:
-        auto_tune = True
-        lambda_param = 1.0  # Starting point for auto-tune
+        lambda_param = 50.0  # Default for MANUAL strategy
 
     filter_obj = L1TrendFilter(
         lambda_param=lambda_param,
-        auto_tune=auto_tune,
+        strategy=strategy,
+        timescale=timescale,
     )
 
     return filter_obj.fit_transform(series)
@@ -414,17 +754,20 @@ def to_trend_json(
 
     return {
         "ticker": ticker,
-        "lambda": result.lambda_used,
+        "lambda_l1": result.lambda_used,
+        "strategy": result.strategy,
+        "timescale": result.timescale,
+        "hp_lambda_equivalent": result.hp_lambda_equivalent,
+        "rss": result.rss,
         "bic": result.bic,
         "knots_count": result.knot_count(),
         "current_velocity": float(result.velocity.iloc[-1]) if len(result.velocity) > 0 else 0.0,
         "mse": mse,
-        "solver": result.solver_stats.get("solver", "unknown"),
         "trend": [{"date": str(idx), "value": float(val)} for idx, val in result.trend.items()],
         "knots": result.knot_dates(),
+        "solver_stats": result.solver_stats,
         "metadata": {
             "original_length": original_length,
             "trend_length": len(result.trend),
-            **result.solver_stats,
         },
     }

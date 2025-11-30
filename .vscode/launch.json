@@ -20,7 +20,11 @@
         "--wavelet-level",
         "6",
         "--include-news",
-        "--agent-progress"
+        "--agent-progress",
+        "--l1-trend",
+        "--l1-lambda",
+        "400",
+        "--l1-auto-tune"
       ],
       "console": "integratedTerminal",
       "justMyCode": true
@@ -49,14 +53,13 @@
         "6",
         "--include-news",
         "--agent-progress",
-        "--enable-boundary-extension",
-        "--boundary-noise-injection",
-        "--boundary-strategy",
-        "gaussian_process",
-        "--boundary-steps",
-        "100",
-        "--boundary-lookback",
-        "20"
+        "--l1-trend",
+        "--l1-strategy",
+        "yamada",
+        "--l1-timescale",
+        "quarterly",
+        "--l1-lambda",
+        "400"
       ],
       "console": "integratedTerminal",
       "justMyCode": true
