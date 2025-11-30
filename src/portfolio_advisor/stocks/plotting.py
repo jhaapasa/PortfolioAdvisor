@@ -696,3 +696,236 @@ def plot_wavelet_variance_spectrum(
         plt.close(fig)
 
     return out_path
+
+
+def render_l1_trend_chart(
+    output_dir: Path,
+    ohlc: dict[str, Any],
+    trend_data: dict[str, Any],
+) -> Path | None:
+    """Render L1 trend extraction visualization with 3 stacked panels.
+
+    Panel 1: Price & Structural Trend (candlesticks + piecewise linear trend + knot markers)
+    Panel 2: Trend Velocity (step plot showing regime state)
+    Panel 3: Residuals (price - trend)
+
+    Args:
+        output_dir: Directory for output (report/ subfolder will be created)
+        ohlc: OHLC dictionary with price data
+        trend_data: L1 trend JSON document with trend, knots, velocity data
+
+    Returns:
+        Path to written chart, or None if data insufficient
+    """
+    df = _ohlc_to_dataframe(ohlc)
+    if df is None or len(df) < 60:
+        _logger.info(
+            "plotting.l1_trend.skip: insufficient data rows=%s", 0 if df is None else len(df)
+        )
+        return None
+
+    # Extract trend data
+    trend_series_data = trend_data.get("trend", [])
+    knot_dates = trend_data.get("knots", [])
+    lambda_used = trend_data.get("lambda", 0.0)
+
+    if not trend_series_data:
+        _logger.info("plotting.l1_trend.skip: no trend data")
+        return None
+
+    try:
+        import matplotlib.pyplot as plt
+        import numpy as np
+        import pandas as pd
+    except Exception as exc:
+        raise RuntimeError("matplotlib, numpy, pandas required for plotting") from exc
+
+    # Build trend and velocity series
+    trend_dates = [pd.to_datetime(item["date"]) for item in trend_series_data]
+    trend_values = [float(item["value"]) for item in trend_series_data]
+    trend_series = pd.Series(trend_values, index=pd.DatetimeIndex(trend_dates), name="trend")
+
+    # Align OHLC data with trend dates (use last 2 years like wavelet)
+    target_len = min(504, len(df))
+    tail = df.tail(target_len)
+
+    # Align trend to tail dates
+    common_dates = tail.index.intersection(trend_series.index)
+    if len(common_dates) < 30:
+        _logger.info("plotting.l1_trend.skip: insufficient overlapping dates")
+        return None
+
+    # Use aligned data
+    aligned_df = tail.loc[common_dates]
+    aligned_trend = trend_series.loc[common_dates]
+
+    # Compute velocity (first difference of trend)
+    velocity = aligned_trend.diff()
+    velocity.iloc[0] = velocity.iloc[1] if len(velocity) > 1 else 0.0
+
+    # Compute residuals
+    residuals = aligned_df["close"] - aligned_trend
+
+    # Identify knot positions
+    knot_dates_dt = [pd.to_datetime(d) for d in knot_dates]
+    knot_mask = aligned_trend.index.isin(knot_dates_dt)
+
+    # Prepare output
+    report_dir = output_dir / "report"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    out_path = report_dir / "candle_ohlcv_2y_l1_trends.png"
+
+    with _plot_lock:
+        fig = None
+        try:
+            # Create figure with 3 subplots sharing x-axis
+            fig, axes = plt.subplots(
+                3,
+                1,
+                figsize=(14, 10),
+                sharex=True,
+                gridspec_kw={"height_ratios": [3, 1, 1]},
+            )
+
+            # ========== Panel 1: Price & Structural Trend ==========
+            ax1 = axes[0]
+
+            # Plot candlesticks (simplified as close line with high/low range)
+            ax1.fill_between(
+                aligned_df.index,
+                aligned_df["low"],
+                aligned_df["high"],
+                alpha=0.2,
+                color="gray",
+                label="High-Low range",
+            )
+            ax1.plot(
+                aligned_df.index,
+                aligned_df["close"],
+                color="gray",
+                alpha=0.6,
+                linewidth=0.8,
+                label="Close price",
+            )
+
+            # Plot L1 trend as TRUE piecewise linear segments
+            # Connect only knot points + endpoints to avoid solver micro-noise
+
+            # Build list of segment endpoints: start, knots, end
+            segment_indices = []
+            if len(aligned_trend) > 0:
+                segment_indices.append(0)  # First point
+            for i, is_knot in enumerate(knot_mask):
+                if is_knot and i not in segment_indices:
+                    segment_indices.append(i)
+            if len(aligned_trend) > 0 and (len(aligned_trend) - 1) not in segment_indices:
+                segment_indices.append(len(aligned_trend) - 1)  # Last point
+
+            # Extract segment points
+            segment_dates = aligned_trend.index[segment_indices]
+            segment_values = aligned_trend.values[segment_indices]
+
+            # Plot the piecewise linear trend (connecting segment points only)
+            ax1.plot(
+                segment_dates,
+                segment_values,
+                color="#1f77b4",
+                linewidth=2.5,
+                label="L1 Trend",
+            )
+
+            # Mark knots (orange diamonds)
+            knot_trend_values = aligned_trend[knot_mask]
+            if len(knot_trend_values) > 0:
+                ax1.scatter(
+                    knot_trend_values.index,
+                    knot_trend_values.values,
+                    color="#ff7f0e",
+                    marker="D",
+                    s=60,
+                    zorder=5,
+                    label=f"Knots ({len(knot_trend_values)})",
+                )
+
+            ax1.set_ylabel("Price ($)")
+            ax1.set_title(f"L1 Trend Structure (λ={lambda_used:.1f})")
+            ax1.legend(loc="upper left", framealpha=0.9, fontsize=9)
+            ax1.grid(True, alpha=0.3)
+
+            # ========== Panel 2: Trend Velocity (Regime State) ==========
+            ax2 = axes[1]
+
+            # Create step plot with color coding
+            positive_velocity = velocity.copy()
+            negative_velocity = velocity.copy()
+            positive_velocity[velocity < 0] = np.nan
+            negative_velocity[velocity >= 0] = np.nan
+
+            ax2.fill_between(
+                velocity.index,
+                0,
+                positive_velocity,
+                step="mid",
+                alpha=0.6,
+                color="#2ca02c",
+                label="Uptrend",
+            )
+            ax2.fill_between(
+                velocity.index,
+                0,
+                negative_velocity,
+                step="mid",
+                alpha=0.6,
+                color="#d62728",
+                label="Downtrend",
+            )
+
+            ax2.axhline(y=0, color="black", linestyle="--", linewidth=0.8, alpha=0.5)
+            ax2.set_ylabel("Velocity ($/day)")
+            ax2.set_title("Trend Velocity (Regime State)")
+            ax2.legend(loc="upper left", framealpha=0.9, fontsize=9)
+            ax2.grid(True, alpha=0.3)
+
+            # ========== Panel 3: Residuals ==========
+            ax3 = axes[2]
+
+            ax3.bar(
+                residuals.index,
+                residuals.values,
+                width=1.0,
+                color="gray",
+                alpha=0.6,
+                label="Residuals",
+            )
+
+            # Add standard deviation bands
+            std_residual = residuals.std()
+            ax3.axhline(y=std_residual, color="#ff7f0e", linestyle="--", linewidth=1, alpha=0.7)
+            ax3.axhline(y=-std_residual, color="#ff7f0e", linestyle="--", linewidth=1, alpha=0.7)
+            ax3.axhline(y=0, color="black", linestyle="-", linewidth=0.8, alpha=0.5)
+
+            ax3.set_ylabel("Residual ($)")
+            ax3.set_xlabel("Date")
+            ax3.set_title(f"Residuals (Noise) — σ={std_residual:.2f}")
+            ax3.grid(True, alpha=0.3)
+
+            # Format x-axis
+            fig.autofmt_xdate()
+            plt.tight_layout()
+
+            fig.savefig(str(out_path), dpi=150, bbox_inches="tight")
+            _logger.info("plotting.l1_trend: saved to %s", out_path)
+
+        except Exception:
+            _logger.warning("plotting.l1_trend: failed", exc_info=True)
+            return None
+        finally:
+            try:
+                if fig is not None:
+                    plt.close(fig)
+                else:
+                    plt.close("all")
+            except Exception:
+                pass
+
+    return out_path

@@ -99,6 +99,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="Inject noise into the boundary extension to mimic historical volatility",
     )
 
+    # L1 trend filtering
+    p.add_argument(
+        "--l1-trend",
+        action="store_true",
+        help="Compute L1 sparse trend extraction (piecewise linear trend with knot detection)",
+    )
+    p.add_argument(
+        "--l1-lambda",
+        type=float,
+        default=None,
+        help="L1 regularization parameter (higher = smoother, default: 50.0)",
+    )
+    p.add_argument(
+        "--l1-auto-tune",
+        action="store_true",
+        help="Auto-tune L1 lambda parameter using BIC grid search",
+    )
+
     # Env overrides
     p.add_argument("--openai-api-key")
     p.add_argument("--openai-base-url")
@@ -349,15 +367,20 @@ def main(argv: list[str] | None = None) -> int:
             "primary_ticker": ticker or symbol,
         }
         requested = None
-        if bool(overrides.get("wavelet")):
-            # Include standard analysis artifacts plus wavelet output
+        want_wavelet = bool(overrides.get("wavelet"))
+        want_l1_trend = bool(overrides.get("l1_trend"))
+        if want_wavelet or want_l1_trend:
+            # Include standard analysis artifacts plus optional trend outputs
             requested = [
                 "primary.ohlc_daily",
                 "analysis.returns",
                 "analysis.volatility",
                 "analysis.sma_20_50_100_200",
-                "analysis.wavelet_modwt_j5_sym4",
             ]
+            if want_wavelet:
+                requested.append("analysis.wavelet_modwt_j5_sym4")
+            if want_l1_trend:
+                requested.append("analysis.trend_l1")
         update_instrument(settings, instrument, requested_artifacts=requested)
     except Exception as exc:  # pragma: no cover - network/provider specific
         print(f"Error: {exc}", file=sys.stderr)

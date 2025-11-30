@@ -47,6 +47,9 @@ class StockPaths:
     def analysis_boundary_extension_json(self, ticker: str) -> Path:
         return self.ticker_dir(ticker) / "analysis" / "boundary_extension.json"
 
+    def analysis_trend_l1_json(self, ticker: str) -> Path:
+        return self.ticker_dir(ticker) / "analysis" / "trend_l1.json"
+
     def report_dir(self, ticker: str) -> Path:
         return self.ticker_dir(ticker) / "report"
 
