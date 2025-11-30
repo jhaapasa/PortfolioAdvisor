@@ -73,6 +73,10 @@ portfolio-advisor --mode stock --ticker AAPL --input-dir ./input --output-dir ./
 - `--boundary-steps` — Forecast steps for boundary extension (default: 10)
 - `--boundary-lookback` — Lookback period for boundary model (default: 30)
 - `--boundary-noise-injection` — Inject noise into boundary extension
+- `--l1-trend` — Compute L1 sparse trend extraction (piecewise linear with knot detection)
+- `--l1-strategy` — Lambda selection: `yamada` (HP-equivalent), `bic` (auto-tune), `manual`
+- `--l1-timescale` — Target timescale for Yamada: `weekly`, `monthly`, `quarterly`
+- `--l1-lambda` — Manual L1 regularization parameter (when `--l1-strategy=manual`)
 
 ### Extract-Text Mode
 
@@ -175,6 +179,13 @@ Most CLI flags map directly to environment variables (e.g., `--log-level` → `L
 - `BOUNDARY_SANITIZATION` — Enable boundary sanitization (default: `false`)
 - `BOUNDARY_NOISE_INJECTION` — Inject noise into boundary extension (default: `false`)
 
+### L1 Trend Filtering
+- `L1_TREND` — Enable L1 sparse trend extraction (default: `false`)
+- `L1_STRATEGY` — Lambda selection: `yamada`, `bic`, or `manual` (default: `yamada`)
+- `L1_TIMESCALE` — Target timescale for Yamada: `weekly`, `monthly`, `quarterly` (default: `monthly`)
+- `L1_LAMBDA` — Manual lambda value when `L1_STRATEGY=manual` (default: `50.0`)
+- `L1_AUTO_TUNE` — [Deprecated] Use `L1_STRATEGY=bic` instead
+
 ### Ollama / Text Extraction
 - `OLLAMA_BASE_URL` — Ollama server URL (default: `http://localhost:11434`)
 - `OLLAMA_TIMEOUT_S` — Request timeout (default: `120`)
@@ -218,6 +229,7 @@ When `OPENAI_API_KEY` is not provided, the system uses a stub LLM that returns p
 - **Historical OHLC data:** Daily price history via Polygon.io
 - **Technical indicators:** Returns (5/21/252-day), volatility (21-day annualized), SMAs (20/50/100/200-day)
 - **Wavelet analysis:** Multi-timescale signal decomposition for trend detection
+- **L1 trend filtering:** Sparse piecewise-linear trend extraction with structural break detection
 - **Boundary stabilization:** Price extension for trend filter edge effects
 - **News integration:** Fetches and summarizes recent news articles per ticker
 - **Visual reports:** Generates candlestick charts with volume for Markdown embedding
@@ -269,7 +281,7 @@ PortfolioAdvisor/
 │   ├── services/              # External API clients
 │   ├── stocks/                # Stock data and analysis modules
 │   ├── tools/                 # Reusable utilities
-│   ├── trend/                 # Trend analysis (boundary stabilization)
+│   ├── trend/                 # Trend analysis (boundary stabilization, L1 filtering)
 │   └── utils/                 # Helper functions
 ├── tests/                     # Unit and integration tests
 ├── docs/                      # Technical documentation

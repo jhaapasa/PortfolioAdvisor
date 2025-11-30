@@ -57,7 +57,7 @@
         "--l1-strategy",
         "yamada",
         "--l1-timescale",
-        "quarterly",
+        "monthly",
         "--l1-lambda",
         "400"
       ],

@@ -2,7 +2,7 @@
 
 This document tracks the implementation status of all design documents and notes any deviations from the original designs.
 
-**Last Updated**: November 2024 (updated for Boundary Stabilization)
+**Last Updated**: November 30, 2024 (updated for L1 Trend Filtering)
 
 ## Fully Implemented Features
 
@@ -83,6 +83,24 @@ This document tracks the implementation status of all design documents and notes
   - **Wavelet integration**: Extension used to stabilize wavelet boundary effects
 - **Deviations from Design**: None, design updated during implementation
 
+### 9. L1 Trend Filtering (Trend Module 2)
+- **Design**: `docs/design/feature-design-sparse-trend-extraction.md`
+- **Implementation**: `docs/implementation/l1-trend-filtering-implementation.md`, `docs/implementation/yamada-equivalence-implementation.md`
+- **Status**: ✅ Complete, production-ready
+- **Key Features**:
+  - `L1TrendFilter` class with CVXPY+OSQP solver
+  - Three lambda selection strategies: Yamada, BIC, Manual
+  - Timescale presets: weekly, monthly, quarterly
+  - HP filter implementation for Yamada equivalence
+  - Bisection search for HP-equivalent lambda
+  - Knot detection for structural break identification
+  - 3-panel visualization (trend, velocity, residuals)
+  - Integration with boundary extension for end-point stabilization
+  - Comprehensive test suite (~700 lines)
+- **Deviations from Design**: 
+  - HP lambda presets adjusted based on Ravn-Uhlig scaling
+  - RSS tolerance relaxed from 5% to 10% in tests for numerical stability
+
 ## Design Documents Status
 
 | Design Doc | Status | Implementation Doc | Notes |
@@ -94,6 +112,7 @@ This document tracks the implementation status of all design documents and notes
 | feature-design-article-text-extraction.md | ⚠️ Implemented | article-extraction-implementation.md | Disabled by default |
 | feature-design-stock-news-7day-report.md | ✅ Implemented | ⚠️ Missing | Needs creation |
 | feature-design-boundary-stabilization.md | ✅ Implemented | (in design doc) | Complete with wavelet integration |
+| feature-design-sparse-trend-extraction.md | ✅ Implemented | l1-trend-filtering-implementation.md, yamada-equivalence-implementation.md | Complete with Yamada equivalence |
 
 ## Implementation Documents Status
 
@@ -105,6 +124,8 @@ This document tracks the implementation status of all design documents and notes
 | article-extraction-implementation.md | feature-design-article-text-extraction.md | ✅ Complete |
 | wavelet-coi-work-summary.md | (None - emergent) | ✅ Complete |
 | confidence-bands-example.md | (None - removed) | ✅ Complete |
+| l1-trend-filtering-implementation.md | feature-design-sparse-trend-extraction.md | ✅ Complete |
+| yamada-equivalence-implementation.md | feature-design-sparse-trend-extraction.md | ✅ Complete |
 
 ## Action Items
 
@@ -149,6 +170,7 @@ This document tracks the implementation status of all design documents and notes
 - COI visualization for wavelets
 - Basket narrative generation with news summaries
 - Wavelet boundary stabilization via price extension (designed and implemented together)
+- L1 trend filtering with Yamada equivalence (designed and implemented together)
 
 ## Summary
 

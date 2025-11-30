@@ -143,7 +143,7 @@ class YamadaEquivalence:
         tolerance: float = 1e-3,
         max_iterations: int = 50,
         lambda_min: float = 0.01,
-        lambda_max: float = 10_000,
+        lambda_max: float = 50_000,
     ):
         """Initialize Yamada equivalence calculator.
 
@@ -151,7 +151,7 @@ class YamadaEquivalence:
             tolerance: Convergence tolerance for lambda (default 1e-3).
             max_iterations: Maximum bisection iterations (default 50).
             lambda_min: Lower bound for lambda search (default 0.01).
-            lambda_max: Upper bound for lambda search (default 10000).
+            lambda_max: Upper bound for lambda search (default 50000).
         """
         self.tolerance = tolerance
         self.max_iterations = max_iterations

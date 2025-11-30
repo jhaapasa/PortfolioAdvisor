@@ -809,9 +809,9 @@ def render_l1_trend_chart(
     aligned_df = tail.loc[common_dates]
     aligned_trend = trend_series.loc[common_dates]
 
-    # Identify knot positions
+    # Identify knot positions (as Series matching aligned_trend index)
     knot_dates_dt = [pd.to_datetime(d) for d in knot_dates]
-    knot_mask = aligned_trend.index.isin(knot_dates_dt)
+    knot_mask = pd.Series(aligned_trend.index.isin(knot_dates_dt), index=aligned_trend.index)
 
     # Compute velocity as TRUE piecewise constant (not diff which has numerical noise)
     # Between knots, the slope is constant - compute average slope per segment

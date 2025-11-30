@@ -1,5 +1,9 @@
 # Design: Sparse Trend Extraction (Trend Module 2)
 
+> **Status**: ✅ **Implemented** (November 2024)
+>
+> See: `docs/implementation/l1-trend-filtering-implementation.md` for implementation details.
+
 ## 1. Introduction
 
 This document outlines the technical design for **Functional Module 2: Sparse Trend Extraction**, part of the **Adaptive Trend & Risk Analysis Subsystem**.
@@ -513,18 +517,22 @@ class L1TrendFilter:
 
 ### 7.4. Tasks
 
-1.  **Setup**: Add `cvxpy` to `pyproject.toml` (Already done).
-2.  **Core L1 Solver**: Implement `L1TrendFilter._solve_l1()` with `cvxpy` + OSQP.
-3.  **HP Filter**: Implement `YamadaEquivalence.compute_hp_trend()` for baseline comparison.
-4.  **Yamada Equivalence**: Implement bisection search in `YamadaEquivalence.find_equivalent_l1_lambda()`.
-5.  **BIC Tuning**: Implement `optimize_lambda_bic()` as fallback strategy.
-6.  **Timescale API**: Implement `fit_transform_timescale()` convenience method.
-7.  **Integration**: Connect to pipeline, handling boundary extension input.
-8.  **Output**: Save JSON artifacts with new schema fields.
-9.  **Visualization**: Update plotting to show timescale annotation and HP comparison.
-10. **Testing**: Add unit tests for:
-    *   HP filter correctness.
-    *   Yamada bisection convergence.
-    *   RSS equivalence validation (L1 RSS ≈ HP RSS within tolerance).
-    *   Timescale preset coverage (weekly, monthly, quarterly).
+All tasks have been completed:
+
+1.  ✅ **Setup**: Add `cvxpy` to `pyproject.toml`.
+2.  ✅ **Core L1 Solver**: Implement `L1TrendFilter._solve_l1()` with `cvxpy` + OSQP.
+3.  ✅ **HP Filter**: Implement `compute_hp_trend()` for baseline comparison.
+4.  ✅ **Yamada Equivalence**: Implement bisection search in `YamadaEquivalence.find_equivalent_l1_lambda()`.
+5.  ✅ **BIC Tuning**: Implement `_optimize_lambda()` via grid search.
+6.  ✅ **Timescale API**: Implement `fit_transform_timescale()` convenience method.
+7.  ✅ **Integration**: Connect to pipeline via `_compute_l1_trend_node()`, with boundary extension support.
+8.  ✅ **Output**: Save JSON artifacts with strategy, timescale, hp_lambda_equivalent, and RSS fields.
+9.  ✅ **Visualization**: Three-panel chart with trend overlays, velocity plot, and residuals.
+10. ✅ **Testing**: Comprehensive test suite in `tests/test_trend_l1.py` covering:
+    *   HP filter correctness
+    *   Yamada bisection convergence
+    *   RSS equivalence validation (L1 RSS ≈ HP RSS within 10% tolerance)
+    *   All timescale presets (weekly, monthly, quarterly)
+    *   Strategy selection (yamada, bic, manual)
+    *   Backwards compatibility (auto_tune → bic)
 
